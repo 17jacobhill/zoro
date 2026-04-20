@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Environment variables
+.env
+
+# Generated data (persistence layer)
+learner/generated/
+
+# OS
+.DS_Store
+
+# Zoro learning system - user-specific data
+.zoro/
+.clinerules/
