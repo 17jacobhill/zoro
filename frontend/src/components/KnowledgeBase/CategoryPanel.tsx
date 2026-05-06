@@ -1,170 +1,69 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Box, Typography, Chip, CircularProgress, IconButton, Tooltip } from '@mui/material';
+import { Alert, Box, Typography, Chip, CircularProgress, IconButton, Tooltip } from '@mui/material';
+import CallMergeIcon from '@mui/icons-material/CallMerge';
+import SearchIcon from '@mui/icons-material/Search';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
 import ClearAllIcon from '@mui/icons-material/ClearAll';
+
 import { api } from '../../services/api';
-import { Button } from '../../design-system/Button';
+import { CompactIconButton } from '../../design-system/CompactIconButton';
 import { TextField } from '../../design-system/TextField';
 import { colors } from '../../design-system/colors';
-import type { KnowledgeItem } from '../../types/knowledge';
-import type { DuplicateSuggestion } from '../../types/knowledge';
+import type { DuplicateSuggestion, MergeSuggestion } from '../../types/knowledge';
 
-type DemoMergeSuggestion = {
-  id: string;
-  merge_from: string[];
-  merge_to: string;
-  reasoning: string;
-};
+type StatusMessage = {
+  severity: 'success' | 'error';
+  message: string;
+} | null;
 
-const demoRuleA: KnowledgeItem = {
-  item_id: 'demo-rule-a',
-  type: 'rule',
-  category: 'visual-style',
-  title: 'Use default green for new icons',
-  content: 'Prefer the default interface green for newly introduced icon accents.',
-  context: null,
-  evidence: null,
-  confidence: 0.92,
-  decay: 0.18,
-  confidence_reasoning: null,
-  decay_reasoning: null,
-  source_file: 'demo-fixture',
-  usage_count: 7,
-  is_favorite: true,
-  is_strict: true,
-  is_testable: false,
-  created_at: '2026-03-28T00:00:00Z',
-};
-
-const demoRuleB: KnowledgeItem = {
-  item_id: 'demo-rule-b',
-  type: 'rule',
-  category: 'visual-style',
-  title: 'Keep icon colors aligned to brand green',
-  content: 'When adding icons, align accent colors with the established brand green palette.',
-  context: null,
-  evidence: null,
-  confidence: 0.88,
-  decay: 0.21,
-  confidence_reasoning: null,
-  decay_reasoning: null,
-  source_file: 'demo-fixture',
-  usage_count: 5,
-  is_favorite: false,
-  is_strict: true,
-  is_testable: false,
-  created_at: '2026-03-28T00:00:00Z',
-};
-
-const demoRuleC: KnowledgeItem = {
-  item_id: 'demo-rule-c',
-  type: 'rule',
-  category: 'review-workflow',
-  title: 'Batch refine must show verification evidence',
-  content: 'Batch rule refine review should display linked code and test snippets from verification notes.',
-  context: null,
-  evidence: null,
-  confidence: 0.94,
-  decay: 0.14,
-  confidence_reasoning: null,
-  decay_reasoning: null,
-  source_file: 'demo-fixture',
-  usage_count: 4,
-  is_favorite: true,
-  is_strict: false,
-  is_testable: false,
-  created_at: '2026-03-28T00:00:00Z',
-};
-
-const demoRuleD: KnowledgeItem = {
-  item_id: 'demo-rule-d',
-  type: 'rule',
-  category: 'review-ux',
-  title: 'Notes carousel should support arrow navigation',
-  content: 'For Notes Used in Refine, provide previous/next controls for quick review.',
-  context: null,
-  evidence: null,
-  confidence: 0.78,
-  decay: 0.34,
-  confidence_reasoning: null,
-  decay_reasoning: null,
-  source_file: 'demo-fixture',
-  usage_count: 3,
-  is_favorite: false,
-  is_strict: false,
-  is_testable: false,
-  created_at: '2026-03-28T00:00:00Z',
-};
-
-const DEMO_MERGE_SUGGESTIONS: DemoMergeSuggestion[] = [
-  {
-    id: 'demo-merge-2',
-    merge_from: ['visual-style', 'icon-style'],
-    merge_to: 'design-system',
-    reasoning: 'Both capture icon/color presentation guidance and are easier to manage as one style bucket.',
-  },
-];
-
-const DEMO_DUPLICATE_SUGGESTIONS: DuplicateSuggestion[] = [
-  {
-    suggestion_id: 'demo-dup-1',
-    item_ids: [demoRuleA.item_id, demoRuleB.item_id],
-    items: [demoRuleA, demoRuleB],
-    similarity_score: 0.93,
-    reasoning: 'These rules are near duplicates and can be merged into one strict visual style rule.',
-    suggested_merged: 'Prefer default interface green for new icons and icon accents.',
-    merged_title: 'Prefer default green for new icons',
-    merged_context: null,
-    merged_evidence: null,
-    is_conflict: false,
-    merged_confidence: 0.91,
-    merged_decay: 0.19,
-    scoring_explanation: 'High semantic overlap on icon color guidance and same UI scope.',
-    dismissed: false,
-  },
-  {
-    suggestion_id: 'demo-dup-2',
-    item_ids: [demoRuleC.item_id, demoRuleD.item_id],
-    items: [demoRuleC, demoRuleD],
-    similarity_score: 0.81,
-    reasoning: 'These both govern refinement review UX and can likely be merged after wording cleanup.',
-    suggested_merged: 'Batch refine review should include verification evidence and navigable note controls.',
-    merged_title: 'Batch refine must show evidence and note navigation',
-    merged_context: null,
-    merged_evidence: null,
-    is_conflict: false,
-    merged_confidence: 0.86,
-    merged_decay: 0.22,
-    scoring_explanation: 'Shared objective with slightly different emphasis (evidence vs navigation).',
-    dismissed: false,
-  },
-];
+function emitKbUpdated() {
+  window.dispatchEvent(
+    new CustomEvent('kb-process-complete', {
+      detail: {
+        newly_added_ids: [],
+        total_added: 0,
+      },
+    })
+  );
+}
 
 export const CategoryPanel: React.FC = () => {
   const [categories, setCategories] = useState<Array<{ name: string; count: number }>>([]);
-  const [duplicateSuggestions, setDuplicateSuggestions] = useState<DuplicateSuggestion[]>(DEMO_DUPLICATE_SUGGESTIONS);
-  const [mergeSuggestions, setMergeSuggestions] = useState<DemoMergeSuggestion[]>(DEMO_MERGE_SUGGESTIONS);
-  const [loading, setLoading] = useState(false);
+  const [duplicateSuggestions, setDuplicateSuggestions] = useState<DuplicateSuggestion[]>([]);
+  const [mergeSuggestions, setMergeSuggestions] = useState<MergeSuggestion[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(false);
   const [loadingDuplicates, setLoadingDuplicates] = useState(false);
+  const [loadingMerges, setLoadingMerges] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [categoryQuery, setCategoryQuery] = useState('');
+  const [statusMessage, setStatusMessage] = useState<StatusMessage>(null);
+  const [mergeScanStarted, setMergeScanStarted] = useState(false);
+  const [duplicateScanStarted, setDuplicateScanStarted] = useState(false);
 
   const loadCategories = async () => {
-    setLoading(true);
+    setLoadingCategories(true);
     try {
-      const data = await api.fetchKBItems({});
+      const data = await api.fetchKBItems({ type: 'rule' });
       const categoryMap: Record<string, number> = {};
-      data.items.forEach((item: any) => {
-        categoryMap[item.category] = (categoryMap[item.category] || 0) + 1;
+      (data.items || []).forEach((item: any) => {
+        const category = String(item.category || 'uncategorized');
+        categoryMap[category] = (categoryMap[category] || 0) + 1;
       });
-      const cats = Object.entries(categoryMap)
+
+      const nextCategories = Object.entries(categoryMap)
         .map(([name, count]) => ({ name, count }))
         .sort((a, b) => a.name.localeCompare(b.name));
-      setCategories(cats);
+
+      setCategories(nextCategories);
+      setSelectedCategories((prev) => prev.filter((name) => nextCategories.some((cat) => cat.name === name)));
     } catch (error) {
       console.error('Failed to load categories:', error);
+      setStatusMessage({
+        severity: 'error',
+        message: 'Failed to load category metadata.',
+      });
     } finally {
-      setLoading(false);
+      setLoadingCategories(false);
     }
   };
 
@@ -187,22 +86,91 @@ export const CategoryPanel: React.FC = () => {
     return categories.filter((c) => c.name.toLowerCase().includes(q));
   }, [categories, categoryQuery]);
 
+  const visibleMergeSuggestions = useMemo(() => {
+    if (selectedCategories.length === 0) return mergeSuggestions;
+    const selected = new Set(selectedCategories);
+    return mergeSuggestions.filter(
+      (suggestion) =>
+        suggestion.merge_from.some((name) => selected.has(name)) || selected.has(suggestion.merge_to)
+    );
+  }, [mergeSuggestions, selectedCategories]);
+
+  const visibleDuplicateSuggestions = useMemo(() => {
+    if (selectedCategories.length === 0) return duplicateSuggestions;
+    const selected = new Set(selectedCategories);
+    return duplicateSuggestions.filter((suggestion) =>
+      (suggestion.items || []).some((item) => selected.has(item.category))
+    );
+  }, [duplicateSuggestions, selectedCategories]);
+
+  const handleSuggestMerges = async () => {
+    setLoadingMerges(true);
+    setMergeScanStarted(true);
+    setStatusMessage(null);
+    try {
+      const data = await api.suggestCategoryMerges();
+      setMergeSuggestions(Array.isArray(data.suggestions) ? (data.suggestions as MergeSuggestion[]) : []);
+    } catch (error: any) {
+      console.error('Failed to suggest category merges:', error);
+      setStatusMessage({
+        severity: 'error',
+        message: error?.response?.data?.error || error?.message || 'Failed to suggest category merges.',
+      });
+      setMergeSuggestions([]);
+    } finally {
+      setLoadingMerges(false);
+    }
+  };
+
+  const handleAcceptMerge = async (suggestion: MergeSuggestion) => {
+    try {
+      const response = await api.acceptCategoryMerge(suggestion.merge_from, suggestion.merge_to);
+      setMergeSuggestions((prev) => prev.filter((item) => item.suggestion_id !== suggestion.suggestion_id));
+      setSelectedCategories((prev) => {
+        const mapped = prev.map((category) =>
+          suggestion.merge_from.includes(category) ? suggestion.merge_to : category
+        );
+        return Array.from(new Set(mapped));
+      });
+      await loadCategories();
+      emitKbUpdated();
+      setStatusMessage({
+        severity: 'success',
+        message: `Merged ${response.updated_items} rules into "${suggestion.merge_to}".`,
+      });
+    } catch (error: any) {
+      console.error('Failed to accept category merge:', error);
+      setStatusMessage({
+        severity: 'error',
+        message: error?.response?.data?.error || error?.message || 'Failed to merge categories.',
+      });
+    }
+  };
+
+  const handleDismissMerge = async (suggestion: MergeSuggestion) => {
+    try {
+      await api.dismissCategoryMerge(suggestion.suggestion_id);
+    } catch (error) {
+      console.error('Failed to dismiss category merge suggestion:', error);
+    } finally {
+      setMergeSuggestions((prev) => prev.filter((item) => item.suggestion_id !== suggestion.suggestion_id));
+    }
+  };
+
   const handleFindDuplicates = async () => {
     setLoadingDuplicates(true);
+    setDuplicateScanStarted(true);
+    setStatusMessage(null);
     try {
-      const data = await api.detectDuplicates();
-      const all = data.duplicates || [];
-      if (selectedCategories.length === 0) {
-        setDuplicateSuggestions(all);
-      } else {
-        const selected = new Set(selectedCategories);
-        const scoped = all.filter((s: DuplicateSuggestion) =>
-          (s.items || []).some((item: any) => selected.has(item.category))
-        );
-        setDuplicateSuggestions(scoped);
-      }
-    } catch (error) {
+      const category = selectedCategories.length === 1 ? selectedCategories[0] : undefined;
+      const data = await api.detectDuplicates(category);
+      setDuplicateSuggestions(Array.isArray(data.duplicates) ? (data.duplicates as DuplicateSuggestion[]) : []);
+    } catch (error: any) {
       console.error('Failed to detect duplicates:', error);
+      setStatusMessage({
+        severity: 'error',
+        message: error?.response?.data?.error || error?.message || 'Failed to detect duplicate rules.',
+      });
       setDuplicateSuggestions([]);
     } finally {
       setLoadingDuplicates(false);
@@ -222,16 +190,34 @@ export const CategoryPanel: React.FC = () => {
         suggestion.scoring_explanation,
         suggestion.is_conflict
       );
-      const removedIds = result.updated_ids || result.removed_ids || suggestion.item_ids;
-      setDuplicateSuggestions((prev) => prev.filter((s) => !s.item_ids.some((id) => removedIds.includes(id))));
+
+      const removedIds = result.removed_item_ids || result.removed_ids || result.updated_ids || suggestion.item_ids.slice(1);
+      setDuplicateSuggestions((prev) =>
+        prev.filter(
+          (item) =>
+            item.suggestion_id !== suggestion.suggestion_id &&
+            !item.item_ids.some((itemId) => removedIds.includes(itemId))
+        )
+      );
       await loadCategories();
-    } catch (error) {
+      emitKbUpdated();
+      setStatusMessage({
+        severity: 'success',
+        message: suggestion.is_conflict
+          ? `Merged conflicting rules into "${mergedTitle}" for follow-up review.`
+          : `Merged duplicate rules into "${mergedTitle}".`,
+      });
+    } catch (error: any) {
       console.error('Failed to merge duplicates:', error);
+      setStatusMessage({
+        severity: 'error',
+        message: error?.response?.data?.error || error?.message || 'Failed to merge duplicate rules.',
+      });
     }
   };
 
   const handleDismissDuplicate = (suggestionId: string) => {
-    setDuplicateSuggestions((prev) => prev.filter((s) => s.suggestion_id !== suggestionId));
+    setDuplicateSuggestions((prev) => prev.filter((item) => item.suggestion_id !== suggestionId));
   };
 
   const toggleCategory = (name: string) => {
@@ -243,7 +229,7 @@ export const CategoryPanel: React.FC = () => {
       <Typography
         variant="body1"
         sx={{
-          color: '#000',
+          color: colors.black,
           pb: 0.25,
           mb: 1.5,
           fontSize: '0.95rem',
@@ -253,6 +239,12 @@ export const CategoryPanel: React.FC = () => {
       >
         Categories & Duplicates
       </Typography>
+
+      {statusMessage && (
+        <Alert severity={statusMessage.severity} sx={{ mb: 1.25 }}>
+          {statusMessage.message}
+        </Alert>
+      )}
 
       <Box
         sx={{
@@ -311,7 +303,7 @@ export const CategoryPanel: React.FC = () => {
           }}
         />
 
-        {loading ? (
+        {loadingCategories ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
             <CircularProgress size={18} sx={{ color: colors.green }} />
           </Box>
@@ -329,10 +321,10 @@ export const CategoryPanel: React.FC = () => {
                     fontSize: '10px',
                     height: 24,
                     cursor: 'pointer',
-                    backgroundColor: selected ? colors.green : '#f4f4f4',
-                    color: selected ? 'white' : '#333',
+                    backgroundColor: selected ? colors.green : colors.surfaceNeutral,
+                    color: selected ? colors.white : colors.strongText,
                     border: '1px solid',
-                    borderColor: selected ? colors.green : '#ddd',
+                    borderColor: selected ? colors.green : colors.divider,
                   }}
                 />
               );
@@ -357,43 +349,56 @@ export const CategoryPanel: React.FC = () => {
           <Typography sx={{ fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.04em' }}>
             CATEGORY MERGES
           </Typography>
+          <CompactIconButton
+            label={loadingMerges ? 'Scanning for category merges' : 'Suggest category merges'}
+            icon={<CallMergeIcon sx={{ fontSize: 18 }} />}
+            tone="green"
+            onClick={handleSuggestMerges}
+            loading={loadingMerges}
+          />
         </Box>
 
-        {mergeSuggestions.length === 0 ? (
-          <Typography sx={{ fontSize: '11px', color: colors.grey }}>No merge suggestions pending.</Typography>
+        <Typography sx={{ fontSize: '10px', color: colors.grey, mb: 1 }}>
+          Scope: {selectedCategories.length ? `${selectedCategories.length} selected categories` : 'All categories'}
+        </Typography>
+
+        {loadingMerges ? (
+          <Typography sx={{ fontSize: '12px', color: colors.grey }}>Looking for overlapping categories...</Typography>
+        ) : visibleMergeSuggestions.length === 0 ? (
+          <Typography sx={{ fontSize: '11px', color: colors.grey }}>
+            {mergeScanStarted ? 'No category merge suggestions right now.' : 'Run merge suggestions to review category consolidation ideas.'}
+          </Typography>
         ) : (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.8 }}>
-            {mergeSuggestions.map((sug) => (
+            {visibleMergeSuggestions.map((suggestion) => (
               <Box
-                key={sug.id}
+                key={suggestion.suggestion_id}
                 sx={{
-                  border: '1px solid #e2e2e2',
+                  border: `1px solid ${colors.dividerMuted}`,
                   borderRadius: 1,
                   p: 0.9,
-                  backgroundColor: '#fff',
+                  backgroundColor: colors.surface,
                 }}
-                >
-                  <Typography sx={{ fontSize: '11px', fontWeight: 700, mb: 0.35 }}>
-                    {sug.merge_from.join(' + ')} {'->'} {sug.merge_to}
-                  </Typography>
-                <Typography sx={{ fontSize: '10px', color: colors.grey, mb: 0.75 }}>
-                  {sug.reasoning}
+              >
+                <Typography sx={{ fontSize: '11px', fontWeight: 700, mb: 0.35 }}>
+                  {suggestion.merge_from.join(' + ')} {'->'} {suggestion.merge_to}
                 </Typography>
-                <Box sx={{ display: 'flex', gap: 0.8 }}>
-                  <Button
-                    onClick={() => setMergeSuggestions((prev) => prev.filter((m) => m.id !== sug.id))}
-                    colorVariant="green"
-                    sx={{ flex: 1, fontSize: '10px', py: 0.35 }}
-                  >
-                    Apply
-                  </Button>
-                  <Button
-                    onClick={() => setMergeSuggestions((prev) => prev.filter((m) => m.id !== sug.id))}
-                    colorVariant="transparent"
-                    sx={{ flex: 1, fontSize: '10px', py: 0.35 }}
-                  >
-                    Dismiss
-                  </Button>
+                <Typography sx={{ fontSize: '10px', color: colors.grey, mb: 0.75 }}>
+                  {suggestion.reasoning}
+                </Typography>
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 0.4 }}>
+                  <CompactIconButton
+                    label={`Apply merge into ${suggestion.merge_to}`}
+                    icon={<DoneAllIcon sx={{ fontSize: 17 }} />}
+                    tone="green"
+                    onClick={() => handleAcceptMerge(suggestion)}
+                  />
+                  <CompactIconButton
+                    label={`Dismiss merge suggestion for ${suggestion.merge_to}`}
+                    icon={<ClearAllIcon sx={{ fontSize: 17 }} />}
+                    tone="grey"
+                    onClick={() => handleDismissMerge(suggestion)}
+                  />
                 </Box>
               </Box>
             ))}
@@ -417,21 +422,13 @@ export const CategoryPanel: React.FC = () => {
           <Typography sx={{ fontSize: '0.78rem', fontWeight: 700, letterSpacing: '0.04em' }}>
             DUPLICATE REVIEW
           </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <Chip
-              label="DEMO"
-              size="small"
-              sx={{ height: 18, fontSize: '9px', backgroundColor: '#eef7ee', color: colors.green, fontWeight: 700 }}
-            />
-            <Button
-              onClick={handleFindDuplicates}
-              disabled={loadingDuplicates}
-              colorVariant="green"
-              sx={{ fontSize: '0.72rem', py: 0.45, px: 1.1, minWidth: 114 }}
-            >
-              {loadingDuplicates ? 'Scanning...' : 'Find Duplicates'}
-            </Button>
-          </Box>
+          <CompactIconButton
+            label={loadingDuplicates ? 'Scanning for duplicates' : 'Find duplicate rules'}
+            icon={<SearchIcon sx={{ fontSize: 18 }} />}
+            tone="green"
+            onClick={handleFindDuplicates}
+            loading={loadingDuplicates}
+          />
         </Box>
 
         <Typography sx={{ fontSize: '10px', color: colors.grey, mb: 1 }}>
@@ -441,60 +438,80 @@ export const CategoryPanel: React.FC = () => {
         <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 0.8 }}>
           {loadingDuplicates ? (
             <Typography sx={{ fontSize: '12px', color: colors.grey }}>Searching for duplicates...</Typography>
-          ) : duplicateSuggestions.length === 0 ? (
-            <Typography sx={{ fontSize: '12px', color: colors.grey }}>No duplicate suggestions yet.</Typography>
+          ) : visibleDuplicateSuggestions.length === 0 ? (
+            <Typography sx={{ fontSize: '12px', color: colors.grey }}>
+              {duplicateScanStarted ? 'No duplicate or conflict suggestions right now.' : 'Run duplicate review to see merge and conflict candidates.'}
+            </Typography>
           ) : (
-            duplicateSuggestions.map((sug) => {
-              const titles = (sug.items || []).map((i) => i.title).filter(Boolean);
-              const categoryNames = Array.from(new Set((sug.items || []).map((i) => i.category).filter(Boolean)));
+            visibleDuplicateSuggestions.map((suggestion) => {
+              const titles = (suggestion.items || []).map((item) => item.title).filter(Boolean);
+              const categoryNames = Array.from(new Set((suggestion.items || []).map((item) => item.category).filter(Boolean)));
               return (
                 <Box
-                  key={sug.suggestion_id}
+                  key={suggestion.suggestion_id}
                   sx={{
-                    border: '1px solid #e2e2e2',
+                    border: `1px solid ${colors.dividerMuted}`,
                     borderRadius: 1,
                     p: 1,
-                    backgroundColor: sug.is_conflict ? '#fffaf0' : '#fff',
+                    backgroundColor: suggestion.is_conflict ? colors.surfaceWarningMuted : colors.surface,
                   }}
                 >
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
                     <Typography sx={{ fontSize: '11px', fontWeight: 700 }}>
-                      {Math.round((sug.similarity_score || 0) * 100)}% match
+                      {Math.round((suggestion.similarity_score || 0) * 100)}% match
                     </Typography>
-                    {sug.is_conflict && (
+                    {suggestion.is_conflict && (
                       <Chip
                         label="Conflict"
                         size="small"
-                        sx={{ height: 18, fontSize: '9px', backgroundColor: colors.gold, color: '#000' }}
+                        sx={{ height: 18, fontSize: '9px', backgroundColor: colors.gold, color: colors.black }}
                       />
                     )}
                   </Box>
 
-                  <Typography sx={{ fontSize: '11px', mb: 0.5 }}>
+                  <Typography sx={{ fontSize: '11px', mb: 0.35 }}>
                     {titles.slice(0, 2).join('  •  ') || 'Untitled rules'}
                   </Typography>
 
+                  <Typography sx={{ fontSize: '10px', color: colors.grey, mb: 0.5 }}>
+                    {suggestion.reasoning}
+                  </Typography>
+
+                  {suggestion.merged_title && (
+                    <Typography sx={{ fontSize: '10px', color: colors.darkGreen, mb: 0.25 }}>
+                      Proposed title: {suggestion.merged_title}
+                    </Typography>
+                  )}
+                  {suggestion.suggested_merged && (
+                    <Typography sx={{ fontSize: '10px', color: colors.darkGreen, mb: 0.6, whiteSpace: 'pre-wrap' }}>
+                      Proposed rule: {suggestion.suggested_merged}
+                    </Typography>
+                  )}
+
                   <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 0.75 }}>
                     {categoryNames.map((name) => (
-                      <Chip key={name} label={name} size="small" sx={{ height: 18, fontSize: '9px', backgroundColor: '#f0f7f0' }} />
+                      <Chip
+                        key={name}
+                        label={name}
+                        size="small"
+                        sx={{ height: 18, fontSize: '9px', backgroundColor: colors.surfaceSuccessTint }}
+                      />
                     ))}
                   </Box>
 
-                  <Box sx={{ display: 'flex', gap: 0.8 }}>
-                    <Button
-                      onClick={() => handleAcceptDuplicate(sug)}
-                      colorVariant="green"
-                      sx={{ flex: 1, fontSize: '10px', py: 0.35 }}
-                    >
-                      Merge
-                    </Button>
-                    <Button
-                      onClick={() => handleDismissDuplicate(sug.suggestion_id)}
-                      colorVariant="transparent"
-                      sx={{ flex: 1, fontSize: '10px', py: 0.35 }}
-                    >
-                      Dismiss
-                    </Button>
+                  <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 0.4 }}>
+                    <CompactIconButton
+                      label={suggestion.is_conflict ? 'Merge conflict suggestion' : 'Merge duplicate rules'}
+                      icon={<DoneAllIcon sx={{ fontSize: 17 }} />}
+                      tone="green"
+                      onClick={() => handleAcceptDuplicate(suggestion)}
+                    />
+                    <CompactIconButton
+                      label="Dismiss duplicate suggestion"
+                      icon={<ClearAllIcon sx={{ fontSize: 17 }} />}
+                      tone="grey"
+                      onClick={() => handleDismissDuplicate(suggestion.suggestion_id)}
+                    />
                   </Box>
                 </Box>
               );

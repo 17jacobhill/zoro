@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
-import { Box, Typography, IconButton, CircularProgress } from '@mui/material';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { Box, Typography, IconButton, CircularProgress, Tooltip } from '@mui/material';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import { TextField } from '../design-system/TextField';
@@ -7,19 +7,41 @@ import PauseIcon from '@mui/icons-material/Pause';
 import EditIcon from '@mui/icons-material/Edit';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import ReactMarkdown from 'react-markdown';
-import { api } from '../services/api';
-import { Button } from '../design-system/Button';
+import { api, type VisualizationPlanDocument } from '../services/api';
 import { Accordion } from '../design-system/Accordion';
+import { CompactIconButton } from '../design-system/CompactIconButton';
 import { colors } from '../design-system/colors';
-import { MonitoringPanel } from './Visualization/MonitoringPanel';
+import { SupervisorPanel } from './Visualization/SupervisorPanel';
 import { RuleLearningPanel } from './Visualization/RuleLearningPanel';
 import { ExtractedPlanView } from './Visualization/ExtractedPlanView';
 import { VisualizationEnforcementPanel } from './Visualization/VisualizationEnforcementPanel';
 import { RuleReviewPanel } from './Visualization/RuleReviewPanel';
+import { ResizableFloatingPanel } from './Visualization/ResizableFloatingPanel';
+import type { EvidenceRecord } from './Visualization/evidence';
 
 interface ParsedChatMessage {
   role: 'user' | 'assistant' | 'other';
   content: string;
+}
+
+type PlayOverlayState = 'detecting' | 'enriching' | 'enriched' | 'no_rules';
+
+interface PlayOverlayMeta {
+  rulesAttachedCount?: number;
+  ruleRetrievalSource?: string;
+  warning?: string;
+}
+
+type PlayPreparationAction = 'extract_plan' | 'enrich_plan' | 'sync_chat_only';
+type PlayPreparationState = 'missing' | 'unenriched' | 'ready';
+
+interface PreparePlayResult {
+  action: PlayPreparationAction;
+  detected: boolean;
+  rulesApplied: boolean;
+  rulesAttachedCount: number;
+  ruleRetrievalSource: string;
+  warning?: string;
 }
 
 function decodeEscapedText(input: string): string {
@@ -65,40 +87,27 @@ function extractCodexTextBlocks(raw: string): string | null {
 }
 
 export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string; onUpdateName: (chatId: string, name: string) => void; }) {
-  const PLAY_DETECTION_DELAY_MS = 3000;
-  const PLAY_DETECTED_VISIBLE_MS = 1100;
+  const PLAY_DETECTED_VISIBLE_MS = 1300;
+  const PLAY_NO_RULES_VISIBLE_MS = 2000;
+  const PLAY_DETECTION_FAILURE_DISMISS_MS = 400;
   const [content, setContent] = useState<string | null>(null);
   const [status, setStatus] = useState<string>('paused');
   const [name, setName] = useState<string>(chatId);
   const [isEditing, setIsEditing] = useState(false);
-  const [plan, setPlan] = useState<any>(null);
+  const [plan, setPlan] = useState<VisualizationPlanDocument | null>(null);
+  const [evidence, setEvidence] = useState<EvidenceRecord[]>([]);
   const [visualization, setVisualization] = useState<any>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const [monitoringOpen, setMonitoringOpen] = useState(false);
-  const [monitorPos, setMonitorPos] = useState({ x: 0, y: 80 });
-  const [monitorDrag, setMonitorDrag] = useState<{ offsetX: number; offsetY: number } | null>(null);
-  const monitorPositioned = useRef(false);
-  const [monitorWidth, setMonitorWidth] = useState(360);
-  const [monitorResize, setMonitorResize] = useState<{ startX: number; startWidth: number } | null>(null);
-  const [monitorHeight, setMonitorHeight] = useState(520);
-  const [monitorResizeY, setMonitorResizeY] = useState<{ startY: number; startHeight: number } | null>(null);
-  const [ruleLearningOpen, setRuleLearningOpen] = useState(false);
-  const [learningPos, setLearningPos] = useState({ x: 0, y: 140 });
-  const [learningDrag, setLearningDrag] = useState<{ offsetX: number; offsetY: number } | null>(null);
-  const learningPositioned = useRef(false);
-  const [learningWidth, setLearningWidth] = useState(360);
-  const [learningResize, setLearningResize] = useState<{ startX: number; startWidth: number } | null>(null);
-  const [learningHeight, setLearningHeight] = useState(520);
-  const [learningResizeY, setLearningResizeY] = useState<{ startY: number; startHeight: number } | null>(null);
   const [notesRefreshKey, setNotesRefreshKey] = useState(0);
-  const [playOverlayState, setPlayOverlayState] = useState<'detecting' | 'detected' | null>(null);
+  const [playOverlayState, setPlayOverlayState] = useState<PlayOverlayState | null>(null);
+  const [playOverlayMeta, setPlayOverlayMeta] = useState<PlayOverlayMeta>({});
   const trackingSignatureRef = useRef<string>('');
   const playOverlayTimersRef = useRef<number[]>([]);
-  const MONITOR_MARGIN = 8;
-  const MONITOR_MIN_WIDTH = 260;
-  const MONITOR_MIN_HEIGHT = 320;
-  const MONITOR_ABS_MAX_WIDTH = 1200;
-  const MONITOR_ABS_MAX_HEIGHT = 1200;
+  const autoPrepareInFlightRef = useRef(false);
+  const autoPrepareAttemptRef = useRef<{ chatId: string; state: PlayPreparationState | null }>({
+    chatId: '',
+    state: null,
+  });
 
   const getTrackingSignature = (metadata: any): string =>
     JSON.stringify(metadata?.plan_tracking || {});
@@ -120,14 +129,134 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
     }
   };
 
+  const fetchEvidence = async () => {
+    const evidenceResult = await api.getEvidence(chatId);
+    if (evidenceResult.success) {
+      setEvidence((evidenceResult.evidence || []) as EvidenceRecord[]);
+    }
+  };
+
+  const countPlanRules = (items: any[]): number => {
+    let total = 0;
+    for (const item of items || []) {
+      if (Array.isArray(item?.rules)) total += item.rules.length;
+      if (Array.isArray(item?.inherited_rules)) total += item.inherited_rules.length;
+      if (Array.isArray(item?.children) && item.children.length) {
+        total += countPlanRules(item.children);
+      }
+    }
+    return total;
+  };
+
+  const hasPlanItems = (planDoc: VisualizationPlanDocument | null | undefined): boolean => {
+    const items = planDoc?.plan?.items;
+    return Array.isArray(items) && items.length > 0;
+  };
+
+  const getPlayPreparationState = (
+    planDoc: VisualizationPlanDocument | null | undefined
+  ): PlayPreparationState => {
+    if (!hasPlanItems(planDoc)) {
+      return 'missing';
+    }
+    const rulesCount = countPlanRules(planDoc?.plan?.items || []);
+    return rulesCount > 0 ? 'ready' : 'unenriched';
+  };
+
+  const preparePlanForPlay = async (): Promise<PreparePlayResult> => {
+    const source = String((visualization as any)?.rule_retrieval_source || 'structured');
+
+    try {
+      const result = await api.prepareVisualizationForPlay(chatId);
+      if (result.success && result.plan) {
+        setPlan(result.plan);
+        await fetchEvidence();
+        const detected = hasPlanItems(result.plan);
+        const rulesAttachedCount = Number(result.rules_attached_count || 0);
+        return {
+          action: (result.play_action || 'sync_chat_only') as PlayPreparationAction,
+          detected,
+          rulesApplied: rulesAttachedCount > 0,
+          rulesAttachedCount,
+          ruleRetrievalSource: String(result.rule_retrieval_source || source),
+          warning: result.warnings?.[0],
+        };
+      }
+    } catch (error) {
+      console.error('Failed to prepare plan for play:', error);
+    }
+    return {
+      action: 'sync_chat_only',
+      detected: false,
+      rulesApplied: false,
+      rulesAttachedCount: 0,
+      ruleRetrievalSource: source,
+    };
+  };
+
+  const primePlayOverlayForState = (preparationState: PlayPreparationState) => {
+    clearPlayOverlayTimers();
+    if (preparationState === 'missing') {
+      setPlayOverlayState('detecting');
+      setPlayOverlayMeta({});
+    } else if (preparationState === 'unenriched') {
+      setPlayOverlayState('enriching');
+      setPlayOverlayMeta({
+        ruleRetrievalSource: String((visualization as any)?.rule_retrieval_source || 'structured')
+      });
+    } else {
+      setPlayOverlayState(null);
+      setPlayOverlayMeta({});
+    }
+  };
+
+  const applyPreparedOverlayState = (prepared: PreparePlayResult) => {
+    if (prepared.action === 'sync_chat_only') {
+      setPlayOverlayState(null);
+      setPlayOverlayMeta({});
+      return;
+    }
+
+    if (prepared.detected) {
+      setPlayOverlayMeta({
+        rulesAttachedCount: prepared.rulesAttachedCount,
+        ruleRetrievalSource: prepared.ruleRetrievalSource,
+        warning: prepared.warning,
+      });
+      setPlayOverlayState(prepared.rulesApplied ? 'enriched' : 'no_rules');
+    }
+
+    const dismissTimer = window.setTimeout(() => {
+      setPlayOverlayState(null);
+      setPlayOverlayMeta({});
+    }, prepared.detected
+      ? (prepared.rulesApplied ? PLAY_DETECTED_VISIBLE_MS : PLAY_NO_RULES_VISIBLE_MS)
+      : PLAY_DETECTION_FAILURE_DISMISS_MS);
+    playOverlayTimersRef.current.push(dismissTimer);
+  };
+
+  const refreshPlanAndEvidence = async (
+    metadata: any,
+    options?: { forcePlanReload?: boolean }
+  ) => {
+    if (options?.forcePlanReload) {
+      const planResult = await api.getVisualizationPlan(chatId);
+      if (planResult.success && planResult.plan) {
+        setPlan(planResult.plan);
+      }
+    } else {
+      await maybeRefreshPlan(metadata);
+    }
+
+    await fetchEvidence();
+  };
+
   const fetchChat = async () => {
     setPlan(null);
     setContent(null);
     
     const response = await api.getChatVisualization(chatId);
     const metadata = response as any;
-    console.log('📊 Visualization response:', response);
-    console.log('📍 plan_tracking:', metadata.plan_tracking);
     setVisualization(response);
     setName(response.name || response.chat_id);
     setStatus(response.status);
@@ -136,11 +265,8 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
     // Hydrate existing stored chat content so play/pause doesn't look like it wiped history.
     const hydratedContent = metadata.cleaned_accumulated_content || metadata.accumulated_content || null;
     setContent(hydratedContent);
-    
-    const planResult = await api.getVisualizationPlan(chatId);
-    if (planResult.success && planResult.plan) {
-      setPlan(planResult.plan);
-    }
+
+    await refreshPlanAndEvidence(metadata, { forcePlanReload: true });
   };
 
   useEffect(() => {
@@ -153,143 +279,6 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
     };
   }, []);
 
-  useLayoutEffect(() => {
-    if (monitoringOpen && !monitorPositioned.current) {
-      const x = Math.max(MONITOR_MARGIN, window.innerWidth - monitorWidth - 16);
-      const y = Math.max(MONITOR_MARGIN, Math.min(80, window.innerHeight - monitorHeight - MONITOR_MARGIN));
-      setMonitorPos({ x, y });
-      monitorPositioned.current = true;
-    }
-  }, [monitoringOpen, monitorWidth, monitorHeight]);
-
-  useEffect(() => {
-    if (ruleLearningOpen && !learningPositioned.current) {
-      const x = Math.max(MONITOR_MARGIN, window.innerWidth - learningWidth - 24);
-      const y = Math.max(MONITOR_MARGIN, Math.min(140, window.innerHeight - learningHeight - MONITOR_MARGIN));
-      setLearningPos({ x, y });
-      learningPositioned.current = true;
-    }
-  }, [ruleLearningOpen, learningWidth, learningHeight]);
-
-  useEffect(() => {
-    if (!monitorDrag && !monitorResize && !monitorResizeY && !learningDrag && !learningResize && !learningResizeY) return;
-
-    const handleMove = (event: MouseEvent) => {
-      const viewWidth = window.innerWidth;
-      const viewHeight = window.innerHeight;
-      const maxX = Math.max(MONITOR_MARGIN, viewWidth - monitorWidth - MONITOR_MARGIN);
-      const maxY = Math.max(MONITOR_MARGIN, viewHeight - monitorHeight - MONITOR_MARGIN);
-
-      if (monitorDrag) {
-        const nextX = Math.min(
-          Math.max(MONITOR_MARGIN, event.clientX - monitorDrag.offsetX),
-          maxX
-        );
-        const nextY = Math.min(
-          Math.max(MONITOR_MARGIN, event.clientY - monitorDrag.offsetY),
-          maxY
-        );
-        setMonitorPos({ x: nextX, y: nextY });
-      }
-
-      if (monitorResize) {
-        const delta = event.clientX - monitorResize.startX;
-        const maxWidthByViewport = Math.max(
-          MONITOR_MIN_WIDTH,
-          Math.min(MONITOR_ABS_MAX_WIDTH, viewWidth - monitorPos.x - MONITOR_MARGIN)
-        );
-        const nextWidth = Math.min(
-          Math.max(MONITOR_MIN_WIDTH, monitorResize.startWidth + delta),
-          maxWidthByViewport
-        );
-        setMonitorWidth(nextWidth);
-      }
-
-      if (monitorResizeY) {
-        const deltaY = event.clientY - monitorResizeY.startY;
-        const maxHeightByViewport = Math.max(
-          MONITOR_MIN_HEIGHT,
-          Math.min(MONITOR_ABS_MAX_HEIGHT, viewHeight - monitorPos.y - MONITOR_MARGIN)
-        );
-        const nextHeight = Math.min(
-          Math.max(MONITOR_MIN_HEIGHT, monitorResizeY.startHeight + deltaY),
-          maxHeightByViewport
-        );
-        setMonitorHeight(nextHeight);
-      }
-
-      const learningMaxX = Math.max(MONITOR_MARGIN, viewWidth - learningWidth - MONITOR_MARGIN);
-      const learningMaxY = Math.max(MONITOR_MARGIN, viewHeight - learningHeight - MONITOR_MARGIN);
-
-      if (learningDrag) {
-        const nextX = Math.min(
-          Math.max(MONITOR_MARGIN, event.clientX - learningDrag.offsetX),
-          learningMaxX
-        );
-        const nextY = Math.min(
-          Math.max(MONITOR_MARGIN, event.clientY - learningDrag.offsetY),
-          learningMaxY
-        );
-        setLearningPos({ x: nextX, y: nextY });
-      }
-
-      if (learningResize) {
-        const delta = event.clientX - learningResize.startX;
-        const maxWidthByViewport = Math.max(
-          MONITOR_MIN_WIDTH,
-          Math.min(MONITOR_ABS_MAX_WIDTH, viewWidth - learningPos.x - MONITOR_MARGIN)
-        );
-        const nextWidth = Math.min(
-          Math.max(MONITOR_MIN_WIDTH, learningResize.startWidth + delta),
-          maxWidthByViewport
-        );
-        setLearningWidth(nextWidth);
-      }
-
-      if (learningResizeY) {
-        const deltaY = event.clientY - learningResizeY.startY;
-        const maxHeightByViewport = Math.max(
-          MONITOR_MIN_HEIGHT,
-          Math.min(MONITOR_ABS_MAX_HEIGHT, viewHeight - learningPos.y - MONITOR_MARGIN)
-        );
-        const nextHeight = Math.min(
-          Math.max(MONITOR_MIN_HEIGHT, learningResizeY.startHeight + deltaY),
-          maxHeightByViewport
-        );
-        setLearningHeight(nextHeight);
-      }
-    };
-
-    const handleUp = () => {
-      setMonitorDrag(null);
-      setMonitorResize(null);
-      setMonitorResizeY(null);
-      setLearningDrag(null);
-      setLearningResize(null);
-      setLearningResizeY(null);
-    };
-
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseup', handleUp);
-    return () => {
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleUp);
-    };
-  }, [
-    monitorDrag,
-    monitorResize,
-    monitorResizeY,
-    monitorWidth,
-    monitorHeight,
-    monitorPos,
-    learningDrag,
-    learningResize,
-    learningResizeY,
-    learningWidth,
-    learningHeight,
-    learningPos,
-  ]);
-
   // Auto-refresh when window regains focus
   useEffect(() => {
     const onFocus = async () => {
@@ -300,7 +289,7 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
       if (!content && (metadata.cleaned_accumulated_content || metadata.accumulated_content)) {
         setContent(metadata.cleaned_accumulated_content || metadata.accumulated_content);
       }
-      await maybeRefreshPlan(metadata);
+      await refreshPlanAndEvidence(metadata);
     };
     
     window.addEventListener('focus', onFocus);
@@ -311,7 +300,6 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
     const poll = async () => {
       if (status === 'polling') {
         const response = await api.pollChatVisualization(chatId);
-        console.log('poll response', response);
         if (response.content) {
           setContent(prev => prev ? prev + '\n\n' + response.content : response.content);
         }
@@ -320,7 +308,7 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
         const meta = metadata as any;
         setVisualization(metadata);
         setStatus(metadata.status);
-        await maybeRefreshPlan(meta);
+        await refreshPlanAndEvidence(meta);
         
       }
     };
@@ -328,12 +316,60 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
     // Poll immediately on mount
     poll();
     
-    // Then poll every 30 seconds
+    // Then poll every 2 seconds
     const interval = setInterval(poll, 2000);
     return () => clearInterval(interval);
   }, [chatId, status]);
 
-  // Soft-refresh visualization metadata while paused so external viz-update changes show up automatically.
+  useEffect(() => {
+    if (status !== 'polling') return;
+
+    const preparationState = getPlayPreparationState(plan);
+    if (preparationState === 'ready') {
+      autoPrepareAttemptRef.current = { chatId, state: null };
+      return;
+    }
+
+    if (autoPrepareInFlightRef.current) return;
+
+    const attempt = autoPrepareAttemptRef.current;
+    if (attempt.chatId === chatId && attempt.state === preparationState) {
+      return;
+    }
+
+    autoPrepareInFlightRef.current = true;
+    autoPrepareAttemptRef.current = { chatId, state: preparationState };
+    primePlayOverlayForState(preparationState);
+
+    let cancelled = false;
+
+    const runAutoPrepare = async () => {
+      try {
+        const prepared = await preparePlanForPlay();
+        if (cancelled) return;
+        applyPreparedOverlayState(prepared);
+      } catch (error) {
+        if (cancelled) return;
+        clearPlayOverlayTimers();
+        setPlayOverlayState(null);
+        setPlayOverlayMeta({});
+        console.error('Failed to auto-prepare plan while polling:', error);
+      } finally {
+        if (!cancelled) {
+          autoPrepareInFlightRef.current = false;
+        }
+      }
+    };
+
+    runAutoPrepare();
+
+    return () => {
+      cancelled = true;
+      autoPrepareInFlightRef.current = false;
+    };
+  }, [chatId, plan, status, visualization]);
+
+  // Soft-refresh visualization metadata while paused so external plan updates show up automatically.
   useEffect(() => {
     if (status !== 'paused') return;
 
@@ -345,7 +381,7 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
       if (!content && (meta.cleaned_accumulated_content || meta.accumulated_content)) {
         setContent(meta.cleaned_accumulated_content || meta.accumulated_content);
       }
-      await maybeRefreshPlan(meta);
+      await refreshPlanAndEvidence(meta);
     };
 
     refresh();
@@ -354,24 +390,19 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
   }, [chatId, status, content]);
 
   const handleStart = async () => {
-    clearPlayOverlayTimers();
-    setPlayOverlayState('detecting');
-
-    const detectedTimer = window.setTimeout(() => {
-      setPlayOverlayState('detected');
-      const dismissTimer = window.setTimeout(() => {
-        setPlayOverlayState(null);
-      }, PLAY_DETECTED_VISIBLE_MS);
-      playOverlayTimersRef.current.push(dismissTimer);
-    }, PLAY_DETECTION_DELAY_MS);
-    playOverlayTimersRef.current.push(detectedTimer);
+    const preparationState = getPlayPreparationState(plan);
+    primePlayOverlayForState(preparationState);
 
     try {
       const response = await api.startChatVisualization(chatId);
       setStatus(response.status);
+
+      const prepared = await preparePlanForPlay();
+      applyPreparedOverlayState(prepared);
     } catch (error) {
       clearPlayOverlayTimers();
       setPlayOverlayState(null);
+      setPlayOverlayMeta({});
       console.error('Failed to start visualization:', error);
     }
   };
@@ -485,20 +516,44 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
                 sx={{ color: colors.darkGreen, mb: 1.4 }}
               />
               <Typography sx={{ fontSize: '0.92rem', fontWeight: 700, color: colors.darkGreen, mb: 0.35 }}>
-                Detecting plan
+                Detecting latest plan
               </Typography>
               <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>
                 Scanning the conversation and getting the workspace ready.
+              </Typography>
+            </>
+          ) : playOverlayState === 'enriching' ? (
+            <>
+              <CircularProgress
+                size={30}
+                thickness={4.2}
+                sx={{ color: colors.darkGreen, mb: 1.4 }}
+              />
+              <Typography sx={{ fontSize: '0.92rem', fontWeight: 700, color: colors.darkGreen, mb: 0.35 }}>
+                Enriching plan with rules
+              </Typography>
+              <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>
+                Applying {playOverlayMeta.ruleRetrievalSource || 'structured'} rules to the extracted plan.
+              </Typography>
+            </>
+          ) : playOverlayState === 'no_rules' ? (
+            <>
+              <CheckCircleOutlineIcon sx={{ fontSize: 32, color: colors.darkGreen, mb: 1.1 }} />
+              <Typography sx={{ fontSize: '0.92rem', fontWeight: 700, color: colors.darkGreen, mb: 0.35 }}>
+                Plan detected, no rules applied
+              </Typography>
+              <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>
+                No {playOverlayMeta.ruleRetrievalSource || 'structured'} rules were attached yet.
               </Typography>
             </>
           ) : (
             <>
               <CheckCircleOutlineIcon sx={{ fontSize: 32, color: colors.green, mb: 1.1 }} />
               <Typography sx={{ fontSize: '0.92rem', fontWeight: 700, color: colors.darkGreen, mb: 0.35 }}>
-                Plan detected
+                Plan enriched
               </Typography>
               <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary' }}>
-                Opening the planning view now.
+                Attached {playOverlayMeta.rulesAttachedCount || 0} rules and opening the planning view.
               </Typography>
             </>
           )}
@@ -513,24 +568,40 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
           {isEditing ? (
             <>
               <TextField value={name} onChange={(e) => setName(e.target.value)} variant="standard" />
-              <Button onClick={handleSaveName} colorVariant="green" sx={{ ml: 1, '&:focus': { outline: 'none' } }} disableRipple>Save</Button>
+              <CompactIconButton
+                label="Save visualization name"
+                icon={<CheckCircleOutlineIcon sx={{ fontSize: 18 }} />}
+                tone="green"
+                onClick={handleSaveName}
+                sx={{ ml: 0.5 }}
+              />
             </>
           ) : (
             <>
               <Typography variant="body1">{name}</Typography>
-              <IconButton onClick={() => setIsEditing(true)} sx={{ ml: 1, '&:focus': { outline: 'none' } }} disableRipple>
-                <EditIcon />
-              </IconButton>
+              <Tooltip title="Edit visualization name">
+                <IconButton onClick={() => setIsEditing(true)} sx={{ ml: 1, '&:focus': { outline: 'none' } }} disableRipple>
+                  <EditIcon />
+                </IconButton>
+              </Tooltip>
             </>
           )}
         </Box>
         <Box sx={{ display: 'flex', gap: 1 }}>
-          <IconButton onClick={handleStart} disabled={status === 'polling' || !!playOverlayState} disableRipple sx={{ '&:focus': { outline: 'none' } }}>
-            <PlayArrowIcon />
-          </IconButton>
-          <IconButton onClick={handlePause} disabled={status === 'paused' || !!playOverlayState} disableRipple sx={{ '&:focus': { outline: 'none' } }}>
-            <PauseIcon />
-          </IconButton>
+          <Tooltip title="Start visualization polling">
+            <span>
+              <IconButton onClick={handleStart} disabled={status === 'polling' || !!playOverlayState} disableRipple sx={{ '&:focus': { outline: 'none' } }}>
+                <PlayArrowIcon />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="Pause visualization polling">
+            <span>
+              <IconButton onClick={handlePause} disabled={status === 'paused' || !!playOverlayState} disableRipple sx={{ '&:focus': { outline: 'none' } }}>
+                <PauseIcon />
+              </IconButton>
+            </span>
+          </Tooltip>
         </Box>
         </Box>
         
@@ -545,6 +616,7 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
               <ExtractedPlanView 
                 plan={plan} 
                 chatId={chatId}
+                evidence={evidence}
                 visualization={visualization}
                 onPlanUpdate={(updatedPlan) => setPlan(updatedPlan)}
                 onItemSelect={(itemId) => setSelectedItemId(itemId)}
@@ -554,6 +626,7 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
                 <RuleReviewPanel
                   chatId={chatId}
                   plan={plan}
+                  evidence={evidence}
                   onItemSelect={(itemId) => setSelectedItemId(itemId)}
                   onPlanUpdate={(updatedPlan) => setPlan(updatedPlan)}
                   notesRefreshKey={notesRefreshKey}
@@ -659,12 +732,13 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
         
         return selectedItem ? (
           <>
-            <PanelResizeHandle style={{ width: '1px', backgroundColor: '#d0d0d0', cursor: 'col-resize' }} />
+            <PanelResizeHandle style={{ width: '1px', backgroundColor: colors.dividerStrong, cursor: 'col-resize' }} />
             <Panel defaultSize={25} minSize={20} maxSize={40}>
               <VisualizationEnforcementPanel
                 chatId={chatId}
                 selectedItemId={selectedItemId}
                 selectedItem={selectedItem}
+                evidence={evidence}
                 onClose={() => setSelectedItemId(null)}
                 notesRefreshKey={notesRefreshKey}
                 onRuleNotesSaved={() => setNotesRefreshKey((k) => k + 1)}
@@ -675,361 +749,13 @@ export function ChatVisualizationView({ chatId, onUpdateName }: { chatId: string
       })()}
     </PanelGroup>
 
-    {/* Floating Supervisor Panel */}
-    <Box
-      sx={{
-        position: 'fixed',
-        left: monitorPos.x,
-        top: monitorPos.y,
-        zIndex: 20,
-        display: 'flex',
-        alignItems: 'stretch',
-        pointerEvents: monitoringOpen ? 'auto' : 'none',
-      }}
-    >
-      {monitoringOpen && (
-        <Box
-          sx={{
-            position: 'relative',
-            width: monitorWidth,
-            height: monitorHeight,
-            bgcolor: 'background.paper',
-            border: '1px solid',
-            borderColor: 'divider',
-            boxShadow: '0 10px 30px rgba(0,0,0,0.12)',
-            pointerEvents: 'auto',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          <Box
-            onMouseDown={(event) => {
-              event.preventDefault();
-              setMonitorResize({
-                startX: event.clientX,
-                startWidth: monitorWidth,
-              });
-            }}
-            sx={{
-              position: 'absolute',
-              right: 0,
-              top: 0,
-              width: 10,
-              height: '100%',
-              cursor: 'ew-resize',
-              zIndex: 3,
-              bgcolor: 'rgba(135, 174, 115, 0.12)',
-              borderLeft: '1px solid',
-              borderColor: 'divider',
-            }}
-          />
-          <Box
-            onMouseDown={(event) => {
-              event.preventDefault();
-              setMonitorResizeY({
-                startY: event.clientY,
-                startHeight: monitorHeight,
-              });
-            }}
-            sx={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: 8,
-              cursor: 'ns-resize',
-              zIndex: 3,
-              bgcolor: 'rgba(135, 174, 115, 0.12)',
-              borderTop: '1px solid',
-              borderColor: 'divider',
-            }}
-          />
-          <Box
-            onMouseDown={(event) => {
-              event.preventDefault();
-              setMonitorResize({
-                startX: event.clientX,
-                startWidth: monitorWidth,
-              });
-              setMonitorResizeY({
-                startY: event.clientY,
-                startHeight: monitorHeight,
-              });
-            }}
-            sx={{
-              position: 'absolute',
-              right: 0,
-              bottom: 0,
-              width: 16,
-              height: 16,
-              cursor: 'nwse-resize',
-              zIndex: 4,
-              bgcolor: 'rgba(135, 174, 115, 0.2)',
-              borderLeft: '1px solid',
-              borderTop: '1px solid',
-              borderColor: 'divider',
-            }}
-          />
-          <Box
-            onMouseDown={(event) => {
-              event.preventDefault();
-              setMonitorDrag({
-                offsetX: event.clientX - monitorPos.x,
-                offsetY: event.clientY - monitorPos.y,
-              });
-            }}
-            sx={{
-              cursor: 'move',
-              userSelect: 'none',
-              px: 1.5,
-              py: 1,
-              bgcolor: colors.green,
-              color: 'white',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-            }}
-          >
-            <Typography variant="caption" sx={{ fontWeight: 600, letterSpacing: '0.08em' }}>
-              SUPERVISOR
-            </Typography>
-            <Box
-              onClick={(event) => {
-                event.stopPropagation();
-                setMonitoringOpen(false);
-              }}
-              sx={{
-                fontSize: '0.7rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                px: 0.75,
-                py: 0.25,
-                borderRadius: 1,
-                bgcolor: colors.darkGreen,
-              }}
-            >
-              Collapse
-            </Box>
-          </Box>
-          <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden', pb: 1 }}>
-            <MonitoringPanel
-              chatId={chatId}
-            />
-          </Box>
-        </Box>
-      )}
-    </Box>
+    <ResizableFloatingPanel title="SUPERVISOR" collapsedTop="44%" panelZIndex={20} initialY={80}>
+      <SupervisorPanel chatId={chatId} visualizationStatus={status} />
+    </ResizableFloatingPanel>
 
-    {/* Floating Rule Learning Panel */}
-    <Box
-      sx={{
-        position: 'fixed',
-        left: learningPos.x,
-        top: learningPos.y,
-        zIndex: 19,
-        display: 'flex',
-        alignItems: 'stretch',
-        pointerEvents: ruleLearningOpen ? 'auto' : 'none',
-      }}
-    >
-      {ruleLearningOpen && (
-        <Box
-          sx={{
-            position: 'relative',
-            width: learningWidth,
-            height: learningHeight,
-            bgcolor: 'background.paper',
-            border: '1px solid',
-            borderColor: 'divider',
-            boxShadow: '0 10px 30px rgba(0,0,0,0.12)',
-            pointerEvents: 'auto',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-          <Box
-            onMouseDown={(event) => {
-              event.preventDefault();
-              setLearningResize({
-                startX: event.clientX,
-                startWidth: learningWidth,
-              });
-            }}
-            sx={{
-              position: 'absolute',
-              right: 0,
-              top: 0,
-              width: 10,
-              height: '100%',
-              cursor: 'ew-resize',
-              zIndex: 3,
-              bgcolor: 'rgba(135, 174, 115, 0.12)',
-              borderLeft: '1px solid',
-              borderColor: 'divider',
-            }}
-          />
-          <Box
-            onMouseDown={(event) => {
-              event.preventDefault();
-              setLearningResizeY({
-                startY: event.clientY,
-                startHeight: learningHeight,
-              });
-            }}
-            sx={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              bottom: 0,
-              height: 8,
-              cursor: 'ns-resize',
-              zIndex: 3,
-              bgcolor: 'rgba(135, 174, 115, 0.12)',
-              borderTop: '1px solid',
-              borderColor: 'divider',
-            }}
-          />
-          <Box
-            onMouseDown={(event) => {
-              event.preventDefault();
-              setLearningResize({
-                startX: event.clientX,
-                startWidth: learningWidth,
-              });
-              setLearningResizeY({
-                startY: event.clientY,
-                startHeight: learningHeight,
-              });
-            }}
-            sx={{
-              position: 'absolute',
-              right: 0,
-              bottom: 0,
-              width: 16,
-              height: 16,
-              cursor: 'nwse-resize',
-              zIndex: 4,
-              bgcolor: 'rgba(135, 174, 115, 0.2)',
-              borderLeft: '1px solid',
-              borderTop: '1px solid',
-              borderColor: 'divider',
-            }}
-          />
-          <Box
-            onMouseDown={(event) => {
-              event.preventDefault();
-              setLearningDrag({
-                offsetX: event.clientX - learningPos.x,
-                offsetY: event.clientY - learningPos.y,
-              });
-            }}
-            sx={{
-              cursor: 'move',
-              userSelect: 'none',
-              px: 1.5,
-              py: 1,
-              bgcolor: colors.green,
-              color: 'white',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-            }}
-          >
-            <Typography variant="caption" sx={{ fontWeight: 600, letterSpacing: '0.08em' }}>
-              RULE LEARNING
-            </Typography>
-            <Box
-              onClick={(event) => {
-                event.stopPropagation();
-                setRuleLearningOpen(false);
-              }}
-              sx={{
-                fontSize: '0.7rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                px: 0.75,
-                py: 0.25,
-                borderRadius: 1,
-                bgcolor: colors.darkGreen,
-              }}
-            >
-              Collapse
-            </Box>
-          </Box>
-          <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden', pb: 1 }}>
-            <RuleLearningPanel chatId={chatId} />
-          </Box>
-        </Box>
-      )}
-    </Box>
-
-    {!monitoringOpen && (
-      <Box
-        onClick={() => setMonitoringOpen(true)}
-        sx={{
-          position: 'fixed',
-          right: 0,
-          top: '44%',
-          transform: 'translateY(-50%)',
-          bgcolor: colors.green,
-          color: 'white',
-          border: '1px solid',
-          borderColor: colors.green,
-          py: 2,
-          px: 0.75,
-          cursor: 'pointer',
-          writingMode: 'vertical-rl',
-          textOrientation: 'mixed',
-          fontSize: '0.75rem',
-          fontWeight: 600,
-          letterSpacing: '0.1em',
-          borderTopLeftRadius: 6,
-          borderBottomLeftRadius: 6,
-          boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
-          zIndex: 21,
-          '&:hover': {
-            bgcolor: colors.darkGreen,
-            borderColor: colors.darkGreen,
-          },
-        }}
-      >
-        SUPERVISOR
-      </Box>
-    )}
-
-    {!ruleLearningOpen && (
-      <Box
-        onClick={() => setRuleLearningOpen(true)}
-        sx={{
-          position: 'fixed',
-          right: 0,
-          top: '62%',
-          transform: 'translateY(-50%)',
-          bgcolor: colors.green,
-          color: 'white',
-          border: '1px solid',
-          borderColor: colors.green,
-          py: 2,
-          px: 0.75,
-          cursor: 'pointer',
-          writingMode: 'vertical-rl',
-          textOrientation: 'mixed',
-          fontSize: '0.72rem',
-          fontWeight: 600,
-          letterSpacing: '0.08em',
-          borderTopLeftRadius: 6,
-          borderBottomLeftRadius: 6,
-          boxShadow: '0 6px 18px rgba(0,0,0,0.12)',
-          zIndex: 20,
-          '&:hover': {
-            bgcolor: colors.darkGreen,
-            borderColor: colors.darkGreen,
-          },
-        }}
-      >
-        RULE LEARNING
-      </Box>
-    )}
+    <ResizableFloatingPanel title="RULE LEARNING" collapsedTop="62%" panelZIndex={19} initialY={140}>
+      <RuleLearningPanel chatId={chatId} visualizationStatus={status} />
+    </ResizableFloatingPanel>
 
     </Box>
   );

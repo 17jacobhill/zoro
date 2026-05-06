@@ -19,6 +19,7 @@ setup(
         'console_scripts': [
             'zoro=backend.cli.cli:cli',
             'zoro-api=backend.api:main',
+            'zoro-backend=backend.api:backend_only_main',
         ],
     },
     author="Jenny Ma",

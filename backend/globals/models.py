@@ -30,7 +30,9 @@ class OpenAIProvider(LLMProvider):
                 "OpenAI API key not found. Set OPENAI_API_KEY environment variable "
                 "or pass api_key parameter."
             )
-        self.client = OpenAI(api_key=self.api_key)
+        timeout_seconds = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "90"))
+        self.client = OpenAI(api_key=self.api_key, timeout=timeout_seconds)
+        self.timeout_seconds = timeout_seconds
     
     def chat_completion(
         self,

@@ -1,17 +1,13 @@
 import json
 import logging
-from pathlib import Path
 from datetime import datetime
 from typing import Dict, List
 
-from backend.utils import get_project_root, strip_markdown_json, get_enforcement_mode
+from backend.utils import strip_markdown_json, get_enforcement_mode, get_llm_model_for_feature
 from backend.globals.models import get_default_provider
 from backend.visualization.prompts.enforcement import ENFORCEMENT_PROMPT
-from backend.visualization.services.plan_tracker import (
-    load_plan_data, 
-    save_plan_data, 
-    collect_rules_for_item
-)
+from backend.visualization.services.evidence_store import append_enforcement_evidence
+from backend.visualization.services.plan_tracker import load_plan_data
 
 logger = logging.getLogger(__name__)
 
@@ -103,12 +99,11 @@ class EnforcementAgent:
         try:
             response = self.provider.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
-                model="gpt-5"
+                model=get_llm_model_for_feature("enforcement")
             )
             
             result = self._parse_response(response)
             
-            # Save only to enforcement_history.json (no tracking update, no runs)
             self._save_single_item_enforcement(chat_id, item_id, result)
             
             logger.info(f"Single item enforcement complete for {item_id}")
@@ -119,18 +114,9 @@ class EnforcementAgent:
             return self._create_error_result(str(e))
     
     def _get_root_items(self, plan_data: Dict) -> List[Dict]:
-        """Get root items regardless of plan structure type."""
+        """Get root items from the normalized persisted plan document."""
         plan = plan_data.get('plan', {})
-        
-        # Try all possible root keys based on structure_type
-        if 'phases' in plan:
-            return plan['phases']
-        elif 'steps' in plan:
-            return plan['steps']
-        elif 'items' in plan:
-            return plan['items']
-        else:
-            return []
+        return plan.get('items', [])
     
     def _parse_response(self, response: str) -> Dict:
         try:
@@ -150,32 +136,7 @@ class EnforcementAgent:
             return self._create_error_result(f"Parse error: {str(e)}")
     
     def _save_single_item_enforcement(self, chat_id: str, item_id: str, result: Dict):
-        history_path = get_project_root() / ".zoro" / "generated" / "visualization" / chat_id / "enforcement_history.json"
-        history_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        if history_path.exists():
-            try:
-                with open(history_path, 'r') as f:
-                    data = json.load(f)
-            except (json.JSONDecodeError, ValueError):
-                # File exists but is empty or corrupted, start fresh
-                logger.warning(f"Corrupted enforcement_history.json for {chat_id}, starting fresh")
-                data = {"items": {}, "runs": []}
-        else:
-            data = {"items": {}, "runs": []}
-        
-        # Extract the enforcement result for this item
-        completed_items = result.get("completed_items", [])
-        if completed_items:
-            item_result = completed_items[0]  # Should only be one item
-            data["items"][item_id] = {
-                "last_enforced": result["timestamp"],
-                "detected_evidence": item_result.get("detected_evidence", ""),
-                "rules_verified": item_result.get("rules_verified", [])
-            }
-        
-        with open(history_path, 'w') as f:
-            json.dump(data, f, indent=2)
+        append_enforcement_evidence(chat_id, item_id, result)
     
     def _create_error_result(self, error: str) -> Dict:
         return {
@@ -184,22 +145,3 @@ class EnforcementAgent:
             "error": error,
             "timestamp": datetime.now().isoformat()
         }
-
-
-def get_enforcement_history(chat_id: str) -> Dict:
-    history_path = get_project_root() / ".zoro" / "generated" / "visualization" / chat_id / "enforcement_history.json"
-    
-    if not history_path.exists():
-        return {"items": {}, "runs": []}
-    
-    with open(history_path, 'r') as f:
-        data = json.load(f)
-    
-    if "items" not in data:
-        data["items"] = {}
-    if "runs" not in data:
-        data["runs"] = []
-    
-    return data
-
-

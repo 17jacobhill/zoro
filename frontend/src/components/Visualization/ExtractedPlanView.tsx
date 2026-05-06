@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Box, Typography, Chip, Tooltip, Alert, Snackbar, IconButton, MenuItem } from '@mui/material';
-import { Add as AddIcon, AddBox as AddBoxIcon, Delete as DeleteIcon, ToggleOn, ToggleOff, AutoFixHigh as AutoFixHighIcon, Edit as EditIcon, ArrowUpward as ArrowUpwardIcon, ArrowDownward as ArrowDownwardIcon, CallMade as CallMadeIcon, Close as CloseIcon } from '@mui/icons-material';
+import { Box, Typography, Chip, Tooltip, Alert, Snackbar, IconButton } from '@mui/material';
+import { Add as AddIcon, AddBox as AddBoxIcon, Delete as DeleteIcon, ToggleOn, ToggleOff, AutoFixHigh as AutoFixHighIcon, Edit as EditIcon, ArrowUpward as ArrowUpwardIcon, ArrowDownward as ArrowDownwardIcon, CallMade as CallMadeIcon, Close as CloseIcon, Check as CheckIcon } from '@mui/icons-material';
 import ScienceIcon from '@mui/icons-material/Science';
 import { Accordion } from '../../design-system/Accordion';
-import { Button } from '../../design-system/Button';
+import { CompactIconButton } from '../../design-system/CompactIconButton';
+import { MenuItem } from '../../design-system/MenuItem';
 import { TextField } from '../../design-system/TextField';
 import { Select } from '../../design-system/Select';
 import { colors } from '../../design-system/colors';
@@ -12,6 +13,8 @@ import { ConflictResolutionModal } from './ConflictResolutionModal';
 import RuleSelectionModal from './RuleSelectionModal';
 import { RefinePlanItemModal } from './RefinePlanItemModal';
 import ReactMarkdown from 'react-markdown';
+import type { EvidenceRecord } from './evidence';
+import { getRuleVerificationRecordsForItem } from './evidence';
 
 interface Rule {
   category: string;
@@ -30,13 +33,6 @@ interface Rule {
   needs_strict_enforcement?: boolean;
   is_testable?: boolean;
   kb_item_id?: string;
-  verifications?: Array<{
-    item_id?: string;
-    verdict?: string;
-    test_evidence?: {
-      result?: string;
-    };
-  }>;
 }
 
 interface RuleConflict {
@@ -68,9 +64,9 @@ interface PlanItem {
 }
 
 interface ExtractedPlan {
-  has_plan: boolean;
   plan: {
     title?: string;
+    description?: string;
     items: PlanItem[];
   };
   rules_retrieved?: boolean;
@@ -80,6 +76,7 @@ interface ExtractedPlan {
 interface ExtractedPlanViewProps {
   plan: ExtractedPlan;
   chatId: string;
+  evidence?: EvidenceRecord[];
   onPlanUpdate?: (plan: ExtractedPlan) => void;
   onItemSelect?: (itemId: string) => void;
   selectedItemId?: string | null;
@@ -100,13 +97,17 @@ type ItemStatus = 'pending' | 'in_progress' | 'completed';
 function PlanTreeItem({ 
   item, 
   level, 
+  siblingIndex,
+  siblingCount,
   parentId,
   tracking,
   onItemSelect,
   selectedItemId,
   chatId,
+  evidence = [],
   onPlanUpdate,
   onDeleteItem,
+  onMoveItem,
   onAddChild,
   onDeleteRule,
   onAddRule,
@@ -117,13 +118,17 @@ function PlanTreeItem({
 }: {
   item: PlanItem; 
   level: number;
+  siblingIndex: number;
+  siblingCount: number;
   parentId?: string;
   tracking: Record<string, string>;
   onItemSelect?: (itemId: string) => void;
   selectedItemId?: string | null;
   chatId: string;
+  evidence?: EvidenceRecord[];
   onPlanUpdate?: (plan: ExtractedPlan) => void;
   onDeleteItem?: (itemId: string) => void;
+  onMoveItem?: (itemId: string, direction: 'up' | 'down') => void;
   onAddChild?: (parentId: string | null, title: string, description: string, position?: number) => void;
   onDeleteRule?: (itemId: string, ruleIndex: number) => void;
   onAddRule?: (itemId: string) => void;
@@ -225,13 +230,13 @@ function PlanTreeItem({
     let verifiedRules = 0;
     let testedRules = 0;
     for (const rule of allRules) {
-      const verifications = (rule.verifications || []).filter((v) => v.item_id === item.id);
+      const verifications = getRuleVerificationRecordsForItem(evidence, item.id, rule);
       const hasPass = verifications.some((v) => String(v.verdict || '').toLowerCase() === 'pass');
       const hasPassingTest = verifications.some(
         (v) =>
           String(v.verdict || '').toLowerCase() === 'pass' &&
-          !!v.test_evidence &&
-          (v.test_evidence.result ? String(v.test_evidence.result).toLowerCase() === 'pass' : true)
+          !!v.tests &&
+          (v.tests.result ? String(v.tests.result).toLowerCase() === 'pass' : true)
       );
       if (hasPass) verifiedRules += 1;
       if (hasPassingTest) testedRules += 1;
@@ -362,6 +367,48 @@ function PlanTreeItem({
                       <AddBoxIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
+                  {onMoveItem && (
+                    <>
+                      <Tooltip title={siblingIndex === 0 ? 'Already first among siblings' : 'Move item up'}>
+                        <span>
+                          <IconButton
+                            size="small"
+                            disableRipple
+                            disabled={siblingIndex === 0}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onMoveItem(item.id!, 'up');
+                            }}
+                            sx={{ color: colors.grey, padding: '2px', '&:focus': { outline: 'none' } }}
+                          >
+                            <ArrowUpwardIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                      <Tooltip
+                        title={
+                          siblingIndex >= siblingCount - 1
+                            ? 'Already last among siblings'
+                            : 'Move item down'
+                        }
+                      >
+                        <span>
+                          <IconButton
+                            size="small"
+                            disableRipple
+                            disabled={siblingIndex >= siblingCount - 1}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onMoveItem(item.id!, 'down');
+                            }}
+                            sx={{ color: colors.grey, padding: '2px', '&:focus': { outline: 'none' } }}
+                          >
+                            <ArrowDownwardIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    </>
+                  )}
                   
                   <Tooltip title="Delete item">
                     <IconButton
@@ -395,8 +442,8 @@ function PlanTreeItem({
                   fontSize: '10px',
                   padding: '2px 8px',
                   borderRadius: '4px',
-                  border: '1px solid #d0d0d0',
-                  color: '#333',
+                  border: `1px solid ${colors.dividerStrong}`,
+                  color: colors.strongText,
                   fontWeight: 500,
                   marginLeft: '4px',
                   whiteSpace: 'nowrap'
@@ -417,8 +464,6 @@ function PlanTreeItem({
                   label="Title"
                   fullWidth
                   size="small"
-                  inputProps={{ style: { fontSize: '0.8rem' } }}
-                  InputLabelProps={{ style: { fontSize: '0.75rem' } }}
                   sx={{ mb: 1 }}
                 />
                 <TextField
@@ -429,17 +474,22 @@ function PlanTreeItem({
                   size="small"
                   multiline
                   minRows={2}
-                  inputProps={{ style: { fontSize: '0.8rem' } }}
-                  InputLabelProps={{ style: { fontSize: '0.75rem' } }}
                   sx={{ mb: 1 }}
                 />
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                  <Button onClick={handleSaveEdit} colorVariant="green" disabled={isSavingEdit} sx={{ fontSize: '0.75rem', py: 0.5 }}>
-                    {isSavingEdit ? 'Saving...' : 'Save'}
-                  </Button>
-                  <Button onClick={() => setIsEditing(false)} colorVariant="transparent" sx={{ fontSize: '0.75rem', py: 0.5 }}>
-                    Cancel
-                  </Button>
+                <Box sx={{ display: 'flex', gap: 0.5 }}>
+                  <CompactIconButton
+                    label="Save item edits"
+                    icon={<CheckIcon sx={{ fontSize: 17 }} />}
+                    tone="green"
+                    onClick={handleSaveEdit}
+                    loading={isSavingEdit}
+                  />
+                  <CompactIconButton
+                    label="Cancel item editing"
+                    icon={<CloseIcon sx={{ fontSize: 17 }} />}
+                    tone="grey"
+                    onClick={() => setIsEditing(false)}
+                  />
                 </Box>
               </Box>
             ) : (
@@ -639,15 +689,14 @@ function PlanTreeItem({
                                   </MenuItem>
                                 ))}
                               </Select>
-                              <Button
-                                size="small"
-                                colorVariant="green"
+                              <CompactIconButton
+                                label="Move rule to selected child"
+                                icon={<CheckIcon sx={{ fontSize: 15 }} />}
+                                tone="green"
                                 onClick={() => handleConfirmMoveDown(idx)}
                                 disabled={!pendingDownMoveTargetId}
-                                sx={{ fontSize: '0.6rem', py: 0.15, px: 0.6, minHeight: '20px' }}
-                              >
-                                Move
-                              </Button>
+                                size="small"
+                              />
                               <Tooltip title="Cancel move">
                                 <IconButton
                                   size="small"
@@ -723,22 +772,22 @@ function PlanTreeItem({
                     ))}
                   </Select>
                 )}
-                <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
-                  <Button
+                <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
+                  <CompactIconButton
+                    label="Cancel adding child item"
+                    icon={<CloseIcon sx={{ fontSize: 17 }} />}
+                    tone="grey"
                     onClick={() => setShowAddForm(false)}
                     size="small"
-                    sx={{ color: colors.grey }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
+                  />
+                  <CompactIconButton
+                    label="Add child item"
+                    icon={<AddIcon sx={{ fontSize: 17 }} />}
+                    tone="green"
                     onClick={handleSubmitNewItem}
-                    colorVariant="green"
-                    size="small"
                     disabled={!newItemTitle.trim()}
-                  >
-                    Add
-                  </Button>
+                    size="small"
+                  />
                 </Box>
               </Box>
             )}
@@ -748,13 +797,17 @@ function PlanTreeItem({
                 key={i} 
                 item={child} 
                 level={level + 1} 
+                siblingIndex={i}
+                siblingCount={item.children?.length || 0}
                 parentId={item.id}
                 tracking={tracking} 
                 onItemSelect={onItemSelect}
                 selectedItemId={selectedItemId}
                 chatId={chatId}
+                evidence={evidence}
                 onPlanUpdate={onPlanUpdate}
                 onDeleteItem={onDeleteItem}
+                onMoveItem={onMoveItem}
                 onAddChild={onAddChild}
                 onDeleteRule={onDeleteRule}
                 onAddRule={onAddRule}
@@ -821,6 +874,48 @@ function PlanTreeItem({
                     <AddBoxIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
+                {onMoveItem && (
+                  <>
+                    <Tooltip title={siblingIndex === 0 ? 'Already first among siblings' : 'Move item up'}>
+                      <span>
+                        <IconButton
+                          size="small"
+                          disableRipple
+                          disabled={siblingIndex === 0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onMoveItem(item.id!, 'up');
+                          }}
+                          sx={{ color: colors.grey, padding: '2px', '&:focus': { outline: 'none' } }}
+                        >
+                          <ArrowUpwardIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                    <Tooltip
+                      title={
+                        siblingIndex >= siblingCount - 1
+                          ? 'Already last among siblings'
+                          : 'Move item down'
+                      }
+                    >
+                      <span>
+                        <IconButton
+                          size="small"
+                          disableRipple
+                          disabled={siblingIndex >= siblingCount - 1}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onMoveItem(item.id!, 'down');
+                          }}
+                          sx={{ color: colors.grey, padding: '2px', '&:focus': { outline: 'none' } }}
+                        >
+                          <ArrowDownwardIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </>
+                )}
                 
                 <Tooltip title="Delete item">
                   <IconButton
@@ -854,8 +949,8 @@ function PlanTreeItem({
                 fontSize: '10px',
                 padding: '2px 8px',
                 borderRadius: '4px',
-                border: '1px solid #d0d0d0',
-                color: '#333',
+                border: `1px solid ${colors.dividerStrong}`,
+                color: colors.strongText,
                 fontWeight: 500,
                 marginLeft: '4px',
                 whiteSpace: 'nowrap'
@@ -872,8 +967,6 @@ function PlanTreeItem({
                 label="Title"
                 fullWidth
                 size="small"
-                inputProps={{ style: { fontSize: '0.8rem' } }}
-                InputLabelProps={{ style: { fontSize: '0.75rem' } }}
                 sx={{ mb: 1 }}
               />
               <TextField
@@ -884,17 +977,22 @@ function PlanTreeItem({
                 size="small"
                 multiline
                 minRows={2}
-                inputProps={{ style: { fontSize: '0.8rem' } }}
-                InputLabelProps={{ style: { fontSize: '0.75rem' } }}
                 sx={{ mb: 1 }}
               />
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <Button onClick={handleSaveEdit} colorVariant="green" disabled={isSavingEdit} sx={{ fontSize: '0.75rem', py: 0.5 }}>
-                  {isSavingEdit ? 'Saving...' : 'Save'}
-                </Button>
-                <Button onClick={() => setIsEditing(false)} colorVariant="transparent" sx={{ fontSize: '0.75rem', py: 0.5 }}>
-                  Cancel
-                </Button>
+              <Box sx={{ display: 'flex', gap: 0.5 }}>
+                <CompactIconButton
+                  label="Save item edits"
+                  icon={<CheckIcon sx={{ fontSize: 17 }} />}
+                  tone="green"
+                  onClick={handleSaveEdit}
+                  loading={isSavingEdit}
+                />
+                <CompactIconButton
+                  label="Cancel item editing"
+                  icon={<CloseIcon sx={{ fontSize: 17 }} />}
+                  tone="grey"
+                  onClick={() => setIsEditing(false)}
+                />
               </Box>
             </Box>
           ) : (
@@ -1094,15 +1192,14 @@ function PlanTreeItem({
                                   </MenuItem>
                                 ))}
                               </Select>
-                              <Button
-                                size="small"
-                                colorVariant="green"
+                              <CompactIconButton
+                                label="Move rule to selected child"
+                                icon={<CheckIcon sx={{ fontSize: 15 }} />}
+                                tone="green"
                                 onClick={() => handleConfirmMoveDown(idx)}
                                 disabled={!pendingDownMoveTargetId}
-                                sx={{ fontSize: '0.6rem', py: 0.15, px: 0.6, minHeight: '20px' }}
-                              >
-                                Move
-                              </Button>
+                                size="small"
+                              />
                               <Tooltip title="Cancel move">
                                 <IconButton
                                   size="small"
@@ -1239,7 +1336,7 @@ function PlanTreeItem({
                         sx={{
                           bgcolor: conflict.severity === 'high' ? colors.red : 
                                   conflict.severity === 'medium' ? colors.gold : colors.blue,
-                          color: '#ffffff',
+                          color: colors.white,
                           fontSize: '0.7rem',
                           height: '18px'
                         }}
@@ -1251,17 +1348,18 @@ function PlanTreeItem({
                     <Typography variant="caption" display="block" sx={{ mb: 1, ml: 1 }}>
                       {conflict.explanation}
                     </Typography>
-                    <Button
-                      onClick={() => {
-                        setSelectedConflict(conflict);
-                        setConflictModalOpen(true);
-                      }}
-                      colorVariant="red"
-                      sx={{ ml: 1, mt: 1 }}
-                      size="small"
-                    >
-                      Resolve Conflict
-                    </Button>
+                    <Box sx={{ ml: 1, mt: 1 }}>
+                      <CompactIconButton
+                        label="Resolve conflict"
+                        icon={<AutoFixHighIcon sx={{ fontSize: 17 }} />}
+                        tone="red"
+                        onClick={() => {
+                          setSelectedConflict(conflict);
+                          setConflictModalOpen(true);
+                        }}
+                        size="small"
+                      />
+                    </Box>
                   </Box>
                 ))}
               </Box>
@@ -1308,22 +1406,22 @@ function PlanTreeItem({
                   ))}
                 </Select>
               )}
-              <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
-                <Button
+              <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
+                <CompactIconButton
+                  label="Cancel adding child item"
+                  icon={<CloseIcon sx={{ fontSize: 17 }} />}
+                  tone="grey"
                   onClick={() => setShowAddForm(false)}
                   size="small"
-                  sx={{ color: colors.grey }}
-                >
-                  Cancel
-                </Button>
-                <Button
+                />
+                <CompactIconButton
+                  label="Add child item"
+                  icon={<AddIcon sx={{ fontSize: 17 }} />}
+                  tone="green"
                   onClick={handleSubmitNewItem}
-                  colorVariant="green"
-                  size="small"
                   disabled={!newItemTitle.trim()}
-                >
-                  Add
-                </Button>
+                  size="small"
+                />
               </Box>
             </Box>
           )}
@@ -1359,7 +1457,7 @@ function PlanTreeItem({
   );
 }
 
-export function ExtractedPlanView({ plan, chatId, onPlanUpdate, onItemSelect, selectedItemId, visualization }: ExtractedPlanViewProps) {
+export function ExtractedPlanView({ plan, chatId, evidence = [], onPlanUpdate, onItemSelect, selectedItemId, visualization }: ExtractedPlanViewProps) {
   const [ruleModalOpen, setRuleModalOpen] = useState(false);
   const [targetItemId, setTargetItemId] = useState<string>('');
   const [refineModalOpen, setRefineModalOpen] = useState(false);
@@ -1396,6 +1494,25 @@ export function ExtractedPlanView({ plan, chatId, onPlanUpdate, onItemSelect, se
     } catch (error) {
       console.error('Failed to delete item:', error);
       setSnackbar({ open: true, message: 'Failed to delete item', severity: 'error' });
+    }
+  };
+
+  const handleMoveItem = async (itemId: string, direction: 'up' | 'down') => {
+    try {
+      await api.movePlanItem(chatId, itemId, direction);
+      setSnackbar({
+        open: true,
+        message: `Item moved ${direction} successfully`,
+        severity: 'success',
+      });
+      await refreshPlan();
+    } catch (error) {
+      console.error('Failed to move item:', error);
+      setSnackbar({
+        open: true,
+        message: `Failed to move item ${direction}`,
+        severity: 'error',
+      });
     }
   };
 
@@ -1547,7 +1664,9 @@ export function ExtractedPlanView({ plan, chatId, onPlanUpdate, onItemSelect, se
     }
   };
 
-  if (!plan.has_plan) return null;
+  const rootItems = plan.plan.items || [];
+  const hasRenderablePlan =
+    rootItems.length > 0 || Boolean(plan.plan.title) || Boolean(plan.plan.description);
 
   const planSearchResults = useMemo(() => {
     const query = planSearchQuery.trim().toLowerCase();
@@ -1616,17 +1735,12 @@ export function ExtractedPlanView({ plan, chatId, onPlanUpdate, onItemSelect, se
       }
     };
 
-    walk(plan.plan.items || []);
+    walk(rootItems);
     return results.slice(0, 50);
-  }, [plan, planSearchQuery]);
+  }, [planSearchQuery, rootItems]);
 
   // Get tracking from visualization prop or plan itself
   const tracking = visualization?.plan_tracking || plan.plan_tracking || {};
-  
-  console.log('🎯 ExtractedPlanView - visualization:', visualization);
-  console.log('🎯 ExtractedPlanView - plan.plan_tracking:', plan.plan_tracking);
-  console.log('🎯 ExtractedPlanView - final tracking:', tracking);
-  console.log('🎯 ExtractedPlanView - plan items:', plan.plan.items);
 
   return (
     <>
@@ -1641,6 +1755,26 @@ export function ExtractedPlanView({ plan, chatId, onPlanUpdate, onItemSelect, se
         defaultOpen={true}
       >
         <Box sx={{ px: 2, pt: 1.25 }}>
+          {!hasRenderablePlan ? (
+            <Box
+              sx={{
+                py: 2,
+                px: 1,
+                border: '1px dashed',
+                borderColor: colors.divider,
+                borderRadius: 1,
+                bgcolor: colors.surfaceSubtle,
+              }}
+            >
+              <Typography sx={{ fontSize: '0.78rem', fontWeight: 700, color: colors.darkGreen, mb: 0.3 }}>
+                No extracted plan yet
+              </Typography>
+              <Typography sx={{ fontSize: '0.7rem', color: 'text.secondary' }}>
+                Extract a plan for this session to populate the workflow view.
+              </Typography>
+            </Box>
+          ) : (
+            <>
           <Box sx={{ mb: 2 }}>
             <TextField
               fullWidth
@@ -1648,7 +1782,6 @@ export function ExtractedPlanView({ plan, chatId, onPlanUpdate, onItemSelect, se
               placeholder="Search plan steps and rules..."
               value={planSearchQuery}
               onChange={(e) => setPlanSearchQuery(e.target.value)}
-              sx={{ '& .MuiInputBase-input': { fontSize: '0.78rem' } }}
             />
             {planSearchQuery.trim() && (
               <Box
@@ -1715,21 +1848,28 @@ export function ExtractedPlanView({ plan, chatId, onPlanUpdate, onItemSelect, se
                 minRows={2}
                 sx={{ mb: 1 }}
               />
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <Button onClick={handleSavePlanMeta} colorVariant="green" disabled={isSavingPlan}>
-                  {isSavingPlan ? 'Saving...' : 'Save'}
-                </Button>
-                <Button onClick={() => setIsEditingPlan(false)} colorVariant="transparent">
-                  Cancel
-                </Button>
+              <Box sx={{ display: 'flex', gap: 0.5 }}>
+                <CompactIconButton
+                  label="Save plan metadata"
+                  icon={<CheckIcon sx={{ fontSize: 17 }} />}
+                  tone="green"
+                  onClick={handleSavePlanMeta}
+                  loading={isSavingPlan}
+                />
+                <CompactIconButton
+                  label="Cancel plan metadata editing"
+                  icon={<CloseIcon sx={{ fontSize: 17 }} />}
+                  tone="grey"
+                  onClick={() => setIsEditingPlan(false)}
+                />
               </Box>
             </Box>
           ) : (
-            <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: (plan.plan as any).description ? 1 : 0.25 }}>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: plan.plan.description ? 1 : 0.25 }}>
               <Box>
-                {(plan.plan as any).description && (
+                {plan.plan.description && (
                   <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary' }}>
-                    {(plan.plan as any).description}
+                    {plan.plan.description}
                   </Typography>
                 )}
               </Box>
@@ -1737,18 +1877,22 @@ export function ExtractedPlanView({ plan, chatId, onPlanUpdate, onItemSelect, se
           )}
 
           <Box>
-            {plan.plan.items?.map((item, i) => (
+            {rootItems.map((item, i) => (
               <PlanTreeItem 
                 key={i} 
                 item={item} 
                 level={0} 
+                siblingIndex={i}
+                siblingCount={rootItems.length}
                 parentId={undefined}
                 tracking={tracking} 
                 onItemSelect={onItemSelect}
                 selectedItemId={selectedItemId}
                 chatId={chatId}
+                evidence={evidence}
                 onPlanUpdate={onPlanUpdate}
                 onDeleteItem={handleDeleteItem}
+                onMoveItem={handleMoveItem}
                 onAddChild={handleAddChildItem}
                 onDeleteRule={handleDeleteRule}
                 onAddRule={openRuleModal}
@@ -1759,6 +1903,8 @@ export function ExtractedPlanView({ plan, chatId, onPlanUpdate, onItemSelect, se
               />
             ))}
           </Box>
+            </>
+          )}
         </Box>
       </Accordion>
 

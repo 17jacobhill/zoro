@@ -186,7 +186,7 @@ Only include if status is "blocked" or "needs_attention". Common blockers for si
 # action_required Field
 Maximum 3-5 specific actions the USER should take (NO verification commands):
 - "Tell coding agent to complete step X first"
-- "Mark step Y as completed: zoro viz-update step-Y completed"
+- "Mark step Y as completed: zoro update-step step-Y completed"
 - "Pause and ensure step Z is finished before continuing"
 - "Tell coding agent: 'Go back to [step-id]'"
 
@@ -283,7 +283,7 @@ Maximum 3-5 specific actions the USER should take:
 - Don't critique implementation details or architecture
 - Don't suggest code improvements
 - Your job: Is coding agent following the plan in order with required rule proofs?
-- Be specific with step IDs (e.g., "phase-2-step-4", not just "step 4")
+- Be specific with step IDs (e.g., "step-2-4", not just "step 4")
 
 ---
 

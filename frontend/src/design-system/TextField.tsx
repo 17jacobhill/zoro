@@ -11,6 +11,8 @@ interface TextFieldProps extends Omit<MuiTextFieldProps, 'color'> {
 
 const TextField = ({
   variant = "outlined",
+  size = "small",
+  multiline = false,
   sx,
   colorVariant = 'green',
   ...props
@@ -18,13 +20,23 @@ const TextField = ({
   const borderColor = colorVariant === 'green' ? colors.green : colors.grey;
   const hoverColor = colorVariant === 'green' ? colors.darkGreen : colors.grey;
   const focusColor = colorVariant === 'green' ? colors.green : colors.grey;
+  const compactHeight = variant === 'standard' ? 32 : 36;
 
   return (
     <MuiTextField
       variant={variant}
+      size={size}
+      multiline={multiline}
       sx={{
         // Remove blue ripple effect
         '& .MuiOutlinedInput-root': {
+          borderRadius: 1.25,
+          ...(multiline
+            ? {}
+            : {
+                minHeight: compactHeight,
+                height: compactHeight,
+              }),
           '& fieldset': {
             borderColor: borderColor,
           },
@@ -43,6 +55,8 @@ const TextField = ({
         // Label colors
         '& .MuiInputLabel-root': {
           color: colors.grey,
+          fontSize: '11px',
+          letterSpacing: 0.1,
           '&.Mui-focused': {
             color: focusColor,
           },
@@ -64,6 +78,11 @@ const TextField = ({
         },
         // Standard variant
         '& .MuiInput-root': {
+          ...(multiline
+            ? {}
+            : {
+                minHeight: compactHeight,
+              }),
           '&:before': {
             borderBottomColor: borderColor,
           },
@@ -89,6 +108,21 @@ const TextField = ({
         },
         '& .MuiInputBase-input': {
           outline: 'none',
+          fontSize: '12px',
+          lineHeight: 1.35,
+          '&::placeholder': {
+            fontSize: '12px',
+            opacity: 0.82,
+          },
+        },
+        '& .MuiInputBase-inputMultiline': {
+          fontSize: '12px',
+          lineHeight: 1.4,
+        },
+        '& .MuiFormHelperText-root': {
+          fontSize: '10px',
+          lineHeight: 1.25,
+          marginLeft: 0.5,
         },
         // Disabled state
         '& .Mui-disabled': {

@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { Dialog, DialogTitle, DialogContent, DialogActions, Box, Typography, Alert } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import { TextField } from '../../design-system/TextField';
-import { Button } from '../../design-system/Button';
+import { CompactIconButton } from '../../design-system/CompactIconButton';
 import { colors } from '../../design-system/colors';
 
 interface RefinePlanItemModalProps {
@@ -87,20 +89,21 @@ export function RefinePlanItemModal({ open, onClose, itemTitle, onSubmit }: Refi
         </Box>
       </DialogContent>
       <DialogActions sx={{ p: 2, gap: 1 }}>
-        <Button
+        <CompactIconButton
+          label="Cancel refine substeps"
+          icon={<CloseIcon sx={{ fontSize: 17 }} />}
+          tone="grey"
           onClick={handleClose}
           disabled={loading}
-          sx={{ color: colors.grey }}
-        >
-          Cancel
-        </Button>
-        <Button
+        />
+        <CompactIconButton
+          label="Refine substeps"
+          icon={<AutoFixHighIcon sx={{ fontSize: 17 }} />}
+          tone="green"
           onClick={handleSubmit}
-          colorVariant="green"
           disabled={!guidance.trim() || loading}
-        >
-          {loading ? 'Refining...' : 'Refine Substeps'}
-        </Button>
+          loading={loading}
+        />
       </DialogActions>
     </Dialog>
   );

@@ -7,7 +7,9 @@ import {
   Box,
   Typography,
 } from '@mui/material';
-import { Button } from '../../design-system/Button';
+import CloseIcon from '@mui/icons-material/Close';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
+import { CompactIconButton } from '../../design-system/CompactIconButton';
 import { TextField } from '../../design-system/TextField';
 import { colors } from '../../design-system/colors';
 
@@ -64,13 +66,13 @@ export function ManualPlanEntryModal({
       fullWidth
       PaperProps={{
         sx: {
-          bgcolor: '#ffffff',
-          color: '#1e1e1e',
+          bgcolor: colors.surface,
+          color: colors.text,
         }
       }}
     >
-      <DialogTitle sx={{ borderBottom: `1px solid ${colors.grey}` }}>
-        <Typography variant="h6" sx={{ color: '#1e1e1e' }}>
+      <DialogTitle sx={{ borderBottom: `1px solid ${colors.divider}` }}>
+        <Typography variant="h6" sx={{ color: colors.text }}>
           Manual Plan Entry
         </Typography>
         <Typography variant="caption" sx={{ color: colors.grey, mt: 0.5, display: 'block' }}>
@@ -90,7 +92,7 @@ export function ManualPlanEntryModal({
           sx={{
             '& .MuiInputBase-root': {
               fontFamily: 'monospace',
-              fontSize: '0.9rem',
+              fontSize: '12px',
             }
           }}
         />
@@ -115,17 +117,22 @@ export function ManualPlanEntryModal({
         )}
       </DialogContent>
 
-      <DialogActions sx={{ borderTop: `1px solid ${colors.grey}`, p: 2 }}>
-        <Button onClick={handleClose} disabled={isExtracting}>
-          Cancel
-        </Button>
-        <Button
+      <DialogActions sx={{ borderTop: `1px solid ${colors.divider}`, p: 2 }}>
+        <CompactIconButton
+          label="Cancel manual plan entry"
+          icon={<CloseIcon sx={{ fontSize: 17 }} />}
+          tone="grey"
+          onClick={handleClose}
+          disabled={isExtracting}
+        />
+        <CompactIconButton
+          label="Retrieve plan from pasted text"
+          icon={<AutoFixHighIcon sx={{ fontSize: 17 }} />}
+          tone="green"
           onClick={handleSubmit}
           disabled={isExtracting || content.trim().length < 50}
-          colorVariant="green"
-        >
-          {isExtracting ? 'Retrieving...' : 'Retrieve Plan'}
-        </Button>
+          loading={isExtracting}
+        />
       </DialogActions>
     </Dialog>
   );

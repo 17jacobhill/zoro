@@ -1,36 +1,40 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  Box,
-  Typography,
-  Divider,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  IconButton,
-  Chip,
-  CircularProgress,
   Alert,
+  Box,
+  Chip,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  IconButton,
   Tooltip,
+  Typography,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import CheckIcon from '@mui/icons-material/Check';
 import StarIcon from '@mui/icons-material/Star';
 import BoltIcon from '@mui/icons-material/Bolt';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import ScienceIcon from '@mui/icons-material/Science';
 import { ToggleOn, ToggleOff } from '@mui/icons-material';
-import { Button } from '../../design-system/Button';
+
+import { CompactIconButton } from '../../design-system/CompactIconButton';
+import { FormControl } from '../../design-system/FormControl';
+import { InputLabel } from '../../design-system/InputLabel';
+import { MenuItem } from '../../design-system/MenuItem';
 import { TextField } from '../../design-system/TextField';
 import { Select } from '../../design-system/Select';
 import { colors } from '../../design-system/colors';
 import { api } from '../../services/api';
+import type { KnowledgeItem } from '../../types/knowledge';
 
 interface AddRuleModalProps {
   open: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (item?: KnowledgeItem) => void;
+  mode?: 'create' | 'edit';
+  initialRule?: KnowledgeItem | null;
 }
 
 interface RefinedRule {
@@ -44,7 +48,34 @@ interface RefinedRule {
   evidence: string | null;
 }
 
-export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
+function toNullableText(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function buildRefinedFromItem(item: KnowledgeItem | null | undefined): RefinedRule | null {
+  if (!item) return null;
+  return {
+    title: item.title || '',
+    content: item.content || '',
+    confidence: item.confidence ?? 0.5,
+    decay: item.decay ?? 0.5,
+    confidence_reasoning: item.confidence_reasoning || '',
+    decay_reasoning: item.decay_reasoning || '',
+    context: item.context ?? null,
+    evidence: item.evidence ?? null,
+  };
+}
+
+export function AddRuleModal({
+  open,
+  onClose,
+  onSuccess,
+  mode = 'create',
+  initialRule = null,
+}: AddRuleModalProps) {
+  const isEditMode = mode === 'edit' && !!initialRule;
+
   const [category, setCategory] = useState('');
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -52,41 +83,31 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
   const [evidence, setEvidence] = useState('');
   const [isStrict, setIsStrict] = useState(false);
   const [isTestable, setIsTestable] = useState(false);
-  
+
   const [categories, setCategories] = useState<string[]>([]);
   const [isRefining, setIsRefining] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [refined, setRefined] = useState<RefinedRule | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Load categories
-  useEffect(() => {
-    if (open) {
-      loadCategories();
-    }
-  }, [open]);
-
-  const loadCategories = async () => {
-    try {
-      const data = await api.fetchKBCategories();
-      if (data.success && data.categories) {
-        const categoryNames = data.categories.map((c: any) => c.name);
-        setCategories(categoryNames);
-      }
-    } catch (err) {
-      console.error('Failed to load categories:', err);
-    }
-  };
-
-  const handleClose = () => {
-    if (!isRefining && !isSaving) {
-      resetForm();
-      onClose();
-    }
+  const applyInitialRule = (rule: KnowledgeItem | null | undefined) => {
+    setCategory(rule?.category || '');
+    setTitle(rule?.title || '');
+    setContent(rule?.content || '');
+    setContext(rule?.context || '');
+    setEvidence(rule?.evidence || '');
+    setIsStrict(Boolean(rule?.is_strict));
+    setIsTestable(Boolean(rule?.is_strict && rule?.is_testable));
+    setRefined(null);
+    setError(null);
   };
 
   const resetForm = () => {
+    if (isEditMode && initialRule) {
+      applyInitialRule(initialRule);
+      return;
+    }
+
     setCategory('');
     setTitle('');
     setContent('');
@@ -96,11 +117,48 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
     setIsTestable(false);
     setRefined(null);
     setError(null);
-    setSuccessMessage(null);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    resetForm();
+  }, [open, initialRule, mode]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const loadCategories = async () => {
+      try {
+        const data = await api.fetchKBCategories();
+        if (data.success && Array.isArray(data.categories)) {
+          const next = Array.from(
+            new Set(
+              [...data.categories, initialRule?.category]
+                .map((value) => String(value || '').trim())
+                .filter(Boolean)
+            )
+          ).sort((a, b) => a.localeCompare(b));
+          setCategories(next);
+        } else {
+          setCategories(initialRule?.category ? [initialRule.category] : []);
+        }
+      } catch (err) {
+        console.error('Failed to load categories:', err);
+        setCategories(initialRule?.category ? [initialRule.category] : []);
+      }
+    };
+
+    loadCategories();
+  }, [open, initialRule?.category]);
+
+  const handleClose = () => {
+    if (!isRefining && !isSaving) {
+      onClose();
+    }
   };
 
   const handleRefine = async () => {
-    if (!title.trim() || !content.trim() || !category) {
+    if (!title.trim() || !content.trim() || !category.trim()) {
       setError('Title, content, and category are required');
       return;
     }
@@ -111,11 +169,11 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
     try {
       const data = await api.refineRule({
         rule_type: 'rule',
-        category,
-        title,
-        content,
-        context: context || null,
-        evidence: evidence || null,
+        category: category.trim(),
+        title: title.trim(),
+        content: content.trim(),
+        context: toNullableText(context),
+        evidence: toNullableText(evidence),
       });
 
       if (data.success && data.refined) {
@@ -124,60 +182,108 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
         setError(data.error || 'Failed to refine rule');
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to refine rule');
+      setError(err?.response?.data?.error || err?.message || 'Failed to refine rule');
     } finally {
       setIsRefining(false);
     }
   };
 
   const handleSave = async () => {
-    if (!refined) {
-      setError('Please refine the rule first');
+    if (!title.trim() || !content.trim() || !category.trim()) {
+      setError('Title, content, and category are required');
       return;
     }
+
+    if (!isEditMode && !refined) {
+      setError('Please refine the rule before saving');
+      return;
+    }
+
+    const payload = {
+      type: 'rule',
+      category: category.trim(),
+      title: (refined?.title ?? title).trim(),
+      content: (refined?.content ?? content).trim(),
+      context: refined ? refined.context : toNullableText(context),
+      evidence: refined ? refined.evidence : toNullableText(evidence),
+      confidence: refined?.confidence ?? initialRule?.confidence ?? 0.5,
+      decay: refined?.decay ?? initialRule?.decay ?? 0.5,
+      confidence_reasoning: refined?.confidence_reasoning ?? initialRule?.confidence_reasoning ?? null,
+      decay_reasoning: refined?.decay_reasoning ?? initialRule?.decay_reasoning ?? null,
+      is_strict: isStrict,
+      is_testable: isStrict && isTestable,
+      is_favorite: initialRule?.is_favorite || false,
+    };
 
     setIsSaving(true);
     setError(null);
 
     try {
-      const data = await api.createKBItem({
-        type: 'rule',
-        category,
-        title: refined.title,
-        content: refined.content,
-        context: refined.context,
-        evidence: refined.evidence,
-        confidence: refined.confidence,
-        decay: refined.decay,
-        confidence_reasoning: refined.confidence_reasoning,
-        decay_reasoning: refined.decay_reasoning,
-        is_strict: isStrict,
-        is_testable: isTestable,
-      });
+      const response = isEditMode && initialRule?.item_id
+        ? await api.updateKBItem(initialRule.item_id, payload)
+        : await api.createKBItem(payload);
 
-      if (data.success) {
-        setSuccessMessage('Rule saved successfully!');
-        setTimeout(() => {
-          resetForm();
-          onSuccess();
-          onClose();
-        }, 1500);
-      } else {
-        setError('Failed to save rule');
+      if (!response.success || !response.item) {
+        throw new Error(isEditMode ? 'Failed to update rule' : 'Failed to save rule');
       }
+
+      const savedItem = response.item as KnowledgeItem;
+      window.dispatchEvent(new CustomEvent('kb-process-complete', {
+        detail: {
+          newly_added_ids: isEditMode ? [] : [savedItem.item_id],
+          total_added: isEditMode ? 0 : 1,
+        },
+      }));
+
+      onSuccess(savedItem);
+      onClose();
     } catch (err: any) {
-      const errorMessage = err.response?.data?.error || err.message || 'Failed to save rule';
-      setError(errorMessage);
+      setError(err?.response?.data?.error || err?.message || (isEditMode ? 'Failed to update rule' : 'Failed to save rule'));
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleRefinedFieldChange = (field: keyof RefinedRule, value: string) => {
-    if (refined) {
-      setRefined({ ...refined, [field]: value });
-    }
+    setRefined((prev) => {
+      const baseline = prev || buildRefinedFromItem(initialRule) || {
+        title: title.trim(),
+        content: content.trim(),
+        confidence: initialRule?.confidence ?? 0.5,
+        decay: initialRule?.decay ?? 0.5,
+        confidence_reasoning: initialRule?.confidence_reasoning || '',
+        decay_reasoning: initialRule?.decay_reasoning || '',
+        context: toNullableText(context),
+        evidence: toNullableText(evidence),
+      };
+
+      if (field === 'context' || field === 'evidence') {
+        return { ...baseline, [field]: value.trim() ? value : null };
+      }
+
+      return { ...baseline, [field]: value };
+    });
   };
+
+  const saveLabel = isEditMode ? 'Save Changes' : 'Save';
+  const saveDisabled = isSaving || isRefining || !title.trim() || !content.trim() || !category.trim() || (!isEditMode && !refined);
+  const modalTitle = isEditMode ? 'Edit Rule in Rules Management' : 'Add Rule to Rules Management';
+  const modalSubtitle = isEditMode
+    ? 'Edit rule details directly, optionally refine with AI, then save the updated rule.'
+    : 'Enter rule details, refine with AI, then save.';
+  const previewTitle = isEditMode ? 'Save Draft (Editable)' : 'Refined Rule (Editable)';
+
+  const availableCategories = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [...categories, category]
+            .map((value) => String(value || '').trim())
+            .filter(Boolean)
+        )
+      ),
+    [categories, category]
+  );
 
   return (
     <Dialog
@@ -187,14 +293,14 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
       fullWidth
       PaperProps={{
         sx: {
-          bgcolor: '#ffffff',
-          color: '#1e1e1e',
+          bgcolor: colors.surface,
+          color: colors.text,
           maxHeight: '90vh',
           borderRadius: 2,
-        }
+        },
       }}
     >
-      <DialogTitle sx={{ borderBottom: '1px solid rgba(0, 0, 0, 0.08)', pb: 1.25 }}>
+      <DialogTitle sx={{ borderBottom: `1px solid ${colors.divider}`, pb: 1.25 }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Box
@@ -202,7 +308,7 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
                 width: 26,
                 height: 26,
                 borderRadius: '50%',
-                bgcolor: '#ecf6e8',
+                bgcolor: colors.surfaceGreenSoft,
                 color: colors.green,
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -211,8 +317,8 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
             >
               <AutoAwesomeIcon sx={{ fontSize: 15 }} />
             </Box>
-            <Typography variant="h6" sx={{ color: '#1e1e1e', fontWeight: 700, fontSize: '1rem' }}>
-              Add Rule to Rules Management
+            <Typography variant="h6" sx={{ color: colors.text, fontWeight: 700, fontSize: '1rem' }}>
+              {modalTitle}
             </Typography>
           </Box>
           <IconButton
@@ -226,40 +332,29 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
           </IconButton>
         </Box>
         <Typography variant="caption" sx={{ color: colors.grey, mt: 0.6, display: 'block', fontSize: '0.72rem' }}>
-          Enter rule details, refine with AI, then save
+          {modalSubtitle}
         </Typography>
       </DialogTitle>
 
       <DialogContent sx={{ mt: 0.5, overflow: 'auto', pt: 1.5 }}>
-        {/* Original Fields */}
         <Box sx={{ mb: 2 }}>
           <Typography sx={{ fontWeight: 700, mb: 1.25, color: colors.grey, fontSize: '0.76rem', textTransform: 'uppercase', letterSpacing: 0.4 }}>
-            Original Rule
+            Rule Fields
           </Typography>
 
           <Box sx={{ display: 'flex', gap: 1.25, mb: 1.25 }}>
             <FormControl size="small" sx={{ flex: 1 }}>
-              <InputLabel
-                sx={{
-                  fontSize: '11px',
-                  color: colors.grey,
-                  '&.Mui-focused': { color: colors.green }
-                }}
-              >
-                Category
-              </InputLabel>
+              <InputLabel>Category</InputLabel>
               <Select
                 value={category}
                 label="Category"
-                onChange={(e) => setCategory(e.target.value)}
+                onChange={(e) => setCategory(e.target.value as string)}
                 disabled={isRefining || isSaving}
-                sx={{
-                  '& .MuiOutlinedInput-root': { height: 40 },
-                  '& .MuiSelect-select': { fontSize: '12px', display: 'flex', alignItems: 'center' }
-                }}
               >
-                {categories.map(cat => (
-                  <MenuItem key={cat} value={cat} sx={{ fontSize: '12px' }}>{cat}</MenuItem>
+                {availableCategories.map((cat) => (
+                  <MenuItem key={cat} value={cat}>
+                    {cat}
+                  </MenuItem>
                 ))}
               </Select>
             </FormControl>
@@ -271,21 +366,12 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               disabled={isRefining || isSaving}
-              sx={{
-                flex: 2,
-                '& .MuiInputBase-root': { height: 40 },
-                '& .MuiInputBase-input': { fontSize: '0.85rem' },
-                '& .MuiInputLabel-root': {
-                  fontSize: '0.78rem',
-                  color: colors.grey,
-                  '&.Mui-focused': { color: colors.green }
-                }
-              }}
+              sx={{ flex: 2 }}
             />
           </Box>
 
           <Box sx={{ mb: 1.25, display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap' }}>
-            <Tooltip title={isStrict ? "Remove strict enforcement" : "Mark for strict enforcement"}>
+            <Tooltip title={isStrict ? 'Remove strict enforcement' : 'Mark for strict enforcement'}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.4 }}>
                 <IconButton
                   size="small"
@@ -299,7 +385,7 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
                   sx={{
                     color: isStrict ? colors.green : colors.grey,
                     padding: '2px',
-                    '&:focus': { outline: 'none' }
+                    '&:focus': { outline: 'none' },
                   }}
                 >
                   {isStrict ? <ToggleOn fontSize="small" /> : <ToggleOff fontSize="small" />}
@@ -309,7 +395,7 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
                 </Typography>
               </Box>
             </Tooltip>
-            <Tooltip title={!isStrict ? "Mark as strict first to enable testing" : isTestable ? "Remove testable marking" : "Mark as testable (requires test evidence)"}>
+            <Tooltip title={!isStrict ? 'Mark as strict first to enable testing' : isTestable ? 'Remove testable marking' : 'Mark as testable (requires test evidence)'}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.4 }}>
                 <span>
                   <IconButton
@@ -321,7 +407,7 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
                       color: isTestable ? colors.blue : colors.grey,
                       padding: '2px',
                       opacity: !isStrict ? 0.3 : 1,
-                      '&:focus': { outline: 'none' }
+                      '&:focus': { outline: 'none' },
                     }}
                   >
                     <ScienceIcon fontSize="small" />
@@ -345,12 +431,7 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
             disabled={isRefining || isSaving}
             sx={{
               mb: 1.25,
-              '& .MuiInputBase-input': { fontSize: '0.85rem', lineHeight: 1.45 },
-              '& .MuiInputLabel-root': {
-                fontSize: '0.78rem',
-                color: colors.grey,
-                '&.Mui-focused': { color: colors.green }
-              }
+              '& .MuiInputBase-inputMultiline': { lineHeight: 1.4 },
             }}
           />
 
@@ -364,15 +445,7 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
             value={context}
             onChange={(e) => setContext(e.target.value)}
             disabled={isRefining || isSaving}
-            sx={{
-              mb: 1.25,
-              '& .MuiInputBase-input': { fontSize: '0.84rem' },
-              '& .MuiInputLabel-root': {
-                fontSize: '0.78rem',
-                color: colors.grey,
-                '&.Mui-focused': { color: colors.green }
-              }
-            }}
+            sx={{ mb: 1.25 }}
           />
 
           <TextField
@@ -385,162 +458,128 @@ export function AddRuleModal({ open, onClose, onSuccess }: AddRuleModalProps) {
             value={evidence}
             onChange={(e) => setEvidence(e.target.value)}
             disabled={isRefining || isSaving}
-            sx={{
-              mb: 1.5,
-              '& .MuiInputBase-input': { fontSize: '0.84rem' },
-              '& .MuiInputLabel-root': {
-                fontSize: '0.78rem',
-                color: colors.grey,
-                '&.Mui-focused': { color: colors.green }
-              }
-            }}
+            sx={{ mb: 1.5 }}
           />
 
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 0.5 }}>
-            <Button
+            <CompactIconButton
+              label={isEditMode ? 'Refine draft with AI' : 'Refine rule with AI'}
+              icon={<AutoAwesomeIcon sx={{ fontSize: 16 }} />}
+              tone="green"
               onClick={handleRefine}
-              disabled={isRefining || isSaving || !title.trim() || !content.trim() || !category}
-              colorVariant="green"
-              startIcon={!isRefining ? <AutoAwesomeIcon sx={{ fontSize: 16 }} /> : undefined}
-              sx={{ minWidth: 168, fontSize: '0.82rem', py: 0.7 }}
-            >
-              {isRefining ? (
-                <>
-                  <CircularProgress size={14} sx={{ color: 'white', mr: 1 }} />
-                  Refining...
-                </>
-              ) : (
-                'Refine with AI'
-              )}
-            </Button>
-            <Button
+              disabled={isSaving || !title.trim() || !content.trim() || !category.trim()}
+              loading={isRefining}
+            />
+            <CompactIconButton
+              label={saveLabel}
+              icon={<CheckIcon sx={{ fontSize: 16 }} />}
+              tone="green"
               onClick={handleSave}
-              disabled={!refined || isSaving || isRefining}
-              colorVariant="green"
-              sx={{ minWidth: 92, fontSize: '0.8rem', py: 0.7, px: 1.25 }}
-            >
-              {isSaving ? (
-                <>
-                  <CircularProgress size={14} sx={{ color: 'white', mr: 0.75 }} />
-                  Saving
-                </>
-              ) : (
-                'Save'
-              )}
-            </Button>
+              disabled={saveDisabled}
+              loading={isSaving}
+            />
           </Box>
         </Box>
 
-        {/* Refined Preview */}
-        {refined && (
+        {(refined || isEditMode) && (
           <Box sx={{ mt: 1 }}>
             <Divider sx={{ mb: 1.5 }} />
             <Typography sx={{ fontWeight: 700, mb: 1.25, color: colors.green, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: 0.4 }}>
-              Refined Rule (Editable)
+              {previewTitle}
             </Typography>
 
             <TextField
               fullWidth
               size="small"
-              label="Refined Title"
-              value={refined.title}
-              onChange={(e) => handleRefinedFieldChange('title', e.target.value)}
-              disabled={isSaving}
-              sx={{
-                mb: 1.25,
-                '& .MuiInputBase-input': { fontSize: '0.85rem' },
-                '& .MuiInputLabel-root': {
-                  fontSize: '0.78rem',
-                  color: colors.grey,
-                  '&.Mui-focused': { color: colors.green }
-                }
+              label={isEditMode ? 'Saved Title' : 'Refined Title'}
+              value={(refined?.title ?? title)}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                handleRefinedFieldChange('title', e.target.value);
               }}
+              disabled={isSaving}
+              sx={{ mb: 1.25 }}
             />
 
             <TextField
               fullWidth
               multiline
               rows={4}
-              label="Refined Content"
-              value={refined.content}
-              onChange={(e) => handleRefinedFieldChange('content', e.target.value)}
+              label={isEditMode ? 'Saved Content' : 'Refined Content'}
+              value={(refined?.content ?? content)}
+              onChange={(e) => {
+                setContent(e.target.value);
+                handleRefinedFieldChange('content', e.target.value);
+              }}
               disabled={isSaving}
               sx={{
                 mb: 1.25,
-                '& .MuiInputBase-input': { fontSize: '0.85rem', lineHeight: 1.45 },
-                '& .MuiInputLabel-root': {
-                  fontSize: '0.78rem',
-                  color: colors.grey,
-                  '&.Mui-focused': { color: colors.green }
-                }
+                '& .MuiInputBase-inputMultiline': { lineHeight: 1.4 },
               }}
             />
 
-            {/* Score Badges */}
             <Box sx={{ display: 'flex', gap: 1.25, mb: 1.25, flexWrap: 'wrap' }}>
               <Box>
                 <Chip
-                  icon={<StarIcon sx={{ fontSize: '14px !important', color: '#fff !important' }} />}
-                  label={`Confidence: ${(refined.confidence * 100).toFixed(0)}%`}
+                  icon={<StarIcon sx={{ fontSize: '14px !important', color: `${colors.white} !important` }} />}
+                  label={`Confidence: ${(((refined?.confidence ?? initialRule?.confidence ?? 0.5) || 0) * 100).toFixed(0)}%`}
                   sx={{
-                    backgroundColor: refined.confidence >= 0.8 ? colors.green : refined.confidence >= 0.6 ? '#ff9800' : '#f44336',
-                    color: 'white',
+                    backgroundColor: (refined?.confidence ?? initialRule?.confidence ?? 0.5) >= 0.8
+                      ? colors.green
+                      : (refined?.confidence ?? initialRule?.confidence ?? 0.5) >= 0.6
+                        ? colors.confidenceMedium
+                        : colors.confidenceLow,
+                    color: colors.white,
                     fontSize: '11px',
                   }}
                 />
                 <Typography sx={{ fontSize: '10.5px', color: colors.grey, mt: 0.5, maxWidth: 280 }}>
-                  {refined.confidence_reasoning}
+                  {refined?.confidence_reasoning || initialRule?.confidence_reasoning || 'Manual draft saved without refreshed confidence reasoning.'}
                 </Typography>
               </Box>
 
               <Box>
                 <Chip
-                  icon={<BoltIcon sx={{ fontSize: '14px !important', color: '#fff !important' }} />}
-                  label={`Specificity: ${(refined.decay * 100).toFixed(0)}%`}
+                  icon={<BoltIcon sx={{ fontSize: '14px !important', color: `${colors.white} !important` }} />}
+                  label={`Specificity: ${(((refined?.decay ?? initialRule?.decay ?? 0.5) || 0) * 100).toFixed(0)}%`}
                   sx={{
-                    backgroundColor: refined.decay > 0.6 ? colors.green : colors.grey,
-                    color: 'white',
+                    backgroundColor: (refined?.decay ?? initialRule?.decay ?? 0.5) > 0.6 ? colors.green : colors.grey,
+                    color: colors.white,
                     fontSize: '11px',
                   }}
                 />
                 <Typography sx={{ fontSize: '10.5px', color: colors.grey, mt: 0.5, maxWidth: 280 }}>
-                  {refined.decay_reasoning}
+                  {refined?.decay_reasoning || initialRule?.decay_reasoning || 'Manual draft saved without refreshed specificity reasoning.'}
                 </Typography>
               </Box>
             </Box>
 
-            {refined.context && (
+            {(refined?.context ?? context) && (
               <Box sx={{ mb: 1.25 }}>
                 <Typography sx={{ fontSize: '10.5px', fontWeight: 700, color: colors.grey }}>Context:</Typography>
-                <Typography sx={{ fontSize: '12px', lineHeight: 1.4 }}>{refined.context}</Typography>
+                <Typography sx={{ fontSize: '12px', lineHeight: 1.4 }}>
+                  {refined?.context ?? context}
+                </Typography>
               </Box>
             )}
 
-            {refined.evidence && (
+            {(refined?.evidence ?? evidence) && (
               <Box>
                 <Typography sx={{ fontSize: '10.5px', fontWeight: 700, color: colors.grey }}>Evidence:</Typography>
-                <Typography sx={{ fontSize: '11.5px', fontFamily: 'monospace', bgcolor: '#fff', p: 1, borderRadius: '6px', border: '1px solid rgba(0, 0, 0, 0.06)' }}>
-                  {refined.evidence}
+                <Typography sx={{ fontSize: '11.5px', fontFamily: 'monospace', bgcolor: colors.surface, p: 1, borderRadius: '6px', border: `1px solid ${colors.divider}` }}>
+                  {refined?.evidence ?? evidence}
                 </Typography>
               </Box>
             )}
           </Box>
         )}
 
-        {/* Alerts */}
         {error && (
           <Alert severity="error" sx={{ mt: 2 }} onClose={() => setError(null)}>
             {error}
           </Alert>
         )}
-
-        {successMessage && (
-          <Alert severity="success" sx={{ mt: 2 }}>
-            {successMessage}
-          </Alert>
-        )}
       </DialogContent>
-
     </Dialog>
   );
 }

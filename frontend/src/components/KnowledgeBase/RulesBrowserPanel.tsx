@@ -1,9 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Box, Typography, MenuItem, FormControl, InputLabel, CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions, Chip } from '@mui/material';
+import { Box, Typography, CircularProgress, Dialog, DialogTitle, DialogContent, DialogActions, Chip } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import CloseIcon from '@mui/icons-material/Close';
+import DeleteIcon from '@mui/icons-material/Delete';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
-import { Button } from '../../design-system/Button';
+import { CompactIconButton } from '../../design-system/CompactIconButton';
+import { FormControl } from '../../design-system/FormControl';
+import { InputLabel } from '../../design-system/InputLabel';
+import { MenuItem } from '../../design-system/MenuItem';
+import { PanelHeader } from '../../design-system/PanelHeader';
 import { TextField } from '../../design-system/TextField';
 import { Select } from '../../design-system/Select';
 import { api } from '../../services/api';
@@ -24,6 +30,7 @@ export const RulesBrowserPanel: React.FC = () => {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [addRuleModalOpen, setAddRuleModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<KnowledgeItem | null>(null);
 
   const loadItems = useCallback(async () => {
     setLoading(true);
@@ -79,7 +86,7 @@ export const RulesBrowserPanel: React.FC = () => {
 
   const handleFavoriteToggle = async (itemId: string, currentFavorite: boolean) => {
     try {
-      await api.updateKBItem(itemId, { is_favorite: !currentFavorite });
+      await api.toggleFavorite(itemId, !currentFavorite);
       await loadItems();
     } catch (error) {
       console.error('Failed to toggle favorite:', error);
@@ -131,34 +138,39 @@ export const RulesBrowserPanel: React.FC = () => {
     setItemToDelete(null);
   };
 
+  const handleOpenAddModal = () => {
+    setEditingItem(null);
+    setAddRuleModalOpen(true);
+  };
+
+  const handleOpenEditModal = (item: KnowledgeItem) => {
+    setEditingItem(item);
+    setAddRuleModalOpen(true);
+  };
+
+  const handleCloseRuleModal = () => {
+    setAddRuleModalOpen(false);
+    setEditingItem(null);
+  };
+
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1,
-          pb: 0.25,
-          mb: 2,
-        }}
-      >
-        <Typography
-          variant="body1"
-          sx={{ color: '#000', fontSize: '0.95rem', fontWeight: 600, lineHeight: 1.2 }}
-        >
-          Rules Management
-        </Typography>
-        <Chip
-          label={`${items.length} rules`}
-          size="small"
-          sx={{
-            backgroundColor: colors.green,
-            color: 'white',
-            fontSize: '10px',
-            height: '20px',
-          }}
-        />
-      </Box>
+      <PanelHeader
+        title="Rules Management"
+        subtitle="Review, refine, and favorite the rules that support the main workflow."
+        badge={
+          <Chip
+            label={`${items.length} rules`}
+            size="small"
+            sx={{
+              backgroundColor: colors.green,
+              color: 'white',
+              fontSize: '10px',
+              height: '20px',
+            }}
+          />
+        }
+      />
 
       <Box sx={{ mb: 2 }}>
         <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
@@ -168,65 +180,40 @@ export const RulesBrowserPanel: React.FC = () => {
             placeholder="Search rules..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            sx={{
-              flex: 2,
-              '& .MuiInputBase-root': { height: 40 },
-              '& .MuiInputBase-input': { fontSize: '11px' },
-              '& .MuiInputBase-input::placeholder': { fontSize: '11px' }
-            }}
+            sx={{ flex: 2 }}
           />
 
           <FormControl size="small" sx={{ flex: 1 }}>
-            <InputLabel
-              sx={{
-                fontSize: '11px',
-                color: colors.grey,
-                '&.Mui-focused': { color: colors.green }
-              }}
-            >
-              Category
-            </InputLabel>
+            <InputLabel>Category</InputLabel>
             <Select
               value={categoryFilter}
               label="Category"
               onChange={(e) => setCategoryFilter(e.target.value as string)}
-              sx={{
-                '& .MuiOutlinedInput-root': { height: 40 },
-                '& .MuiSelect-select': { fontSize: '11px', display: 'flex', alignItems: 'center' }
-              }}
             >
-              <MenuItem value="" sx={{ fontSize: '11px' }}>All</MenuItem>
+              <MenuItem value="">All</MenuItem>
               {categories.map(cat => (
-                <MenuItem key={cat} value={cat} sx={{ fontSize: '11px' }}>{cat}</MenuItem>
+                <MenuItem key={cat} value={cat}>{cat}</MenuItem>
               ))}
             </Select>
           </FormControl>
 
-          <Button
+          <CompactIconButton
+            label={favoritesOnly ? 'Show all rules' : 'Show favorites only'}
+            icon={favoritesOnly ? <StarIcon sx={{ fontSize: 18 }} /> : <StarBorderIcon sx={{ fontSize: 18 }} />}
+            tone={favoritesOnly ? 'gold' : 'grey'}
+            active={favoritesOnly}
             onClick={() => setFavoritesOnly((prev) => !prev)}
-            colorVariant={favoritesOnly ? 'green' : 'transparent'}
-            startIcon={favoritesOnly ? <StarIcon sx={{ fontSize: 14 }} /> : <StarBorderIcon sx={{ fontSize: 14 }} />}
-            sx={{
-              minWidth: 116,
-              height: 40,
-              fontSize: '11px',
-              py: 0,
-              px: 1
-            }}
-          >
-            Favorites
-          </Button>
+            sx={{ alignSelf: 'center' }}
+          />
         </Box>
 
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-          <Button
-            onClick={() => setAddRuleModalOpen(true)}
-            colorVariant="green"
-            startIcon={<AddIcon />}
-            sx={{ fontSize: '11px', py: 0.5 }}
-          >
-            Add Rule
-          </Button>
+          <CompactIconButton
+            label="Add rule"
+            icon={<AddIcon sx={{ fontSize: 18 }} />}
+            tone="green"
+            onClick={handleOpenAddModal}
+          />
         </Box>
       </Box>
 
@@ -249,6 +236,7 @@ export const RulesBrowserPanel: React.FC = () => {
                 isSelected={selectedItemId === item.item_id}
                 onSelect={() => setSelectedItemId(item.item_id)}
                 onFavoriteToggle={() => handleFavoriteToggle(item.item_id, item.is_favorite)}
+                onEdit={() => handleOpenEditModal(item)}
                 onDelete={() => handleDelete(item.item_id)}
                 onStrictToggle={() => handleStrictToggle(item.item_id, item.is_strict || false)}
                 onTestableToggle={() => handleTestableToggle(item.item_id, item.is_testable || false)}
@@ -261,11 +249,16 @@ export const RulesBrowserPanel: React.FC = () => {
       {/* Add Rule Modal */}
       <AddRuleModal
         open={addRuleModalOpen}
-        onClose={() => setAddRuleModalOpen(false)}
-        onSuccess={() => {
+        onClose={handleCloseRuleModal}
+        onSuccess={(savedItem) => {
+          if (savedItem?.item_id) {
+            setSelectedItemId(savedItem.item_id);
+          }
           loadItems();
-          setAddRuleModalOpen(false);
+          handleCloseRuleModal();
         }}
+        mode={editingItem ? 'edit' : 'create'}
+        initialRule={editingItem}
       />
 
       {/* Delete Confirmation Dialog */}
@@ -284,30 +277,18 @@ export const RulesBrowserPanel: React.FC = () => {
           </Typography>
         </DialogContent>
         <DialogActions sx={{ p: 2, gap: 1 }}>
-          <Button
+          <CompactIconButton
+            label="Cancel delete"
+            icon={<CloseIcon sx={{ fontSize: 17 }} />}
+            tone="grey"
             onClick={cancelDelete}
-            sx={{ 
-              flex: 1, 
-              fontSize: '12px',
-              backgroundColor: colors.grey,
-              color: 'white',
-              '&:hover': { backgroundColor: colors.darkGreen }
-            }}
-          >
-            Cancel
-          </Button>
-          <Button
+          />
+          <CompactIconButton
+            label="Delete rule"
+            icon={<DeleteIcon sx={{ fontSize: 17 }} />}
+            tone="red"
             onClick={confirmDelete}
-            sx={{ 
-              flex: 1, 
-              fontSize: '12px',
-              backgroundColor: colors.red,
-              color: 'white',
-              '&:hover': { backgroundColor: colors.darkGreen }
-            }}
-          >
-            Delete
-          </Button>
+          />
         </DialogActions>
       </Dialog>
     </Box>

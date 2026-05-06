@@ -1,106 +1,192 @@
-# Zoro Learning System
+# Zoro
 
-Learn your coding patterns from Cline conversations, then automatically apply them to future tasks.
+Zoro is a local-first workflow assistant for plan extraction, rule tracking, and coding-session visualization.
 
-Simple CLI + `.clinerules/` files.
+It includes:
+- A Flask backend API
+- A React + Vite frontend
+- A `zoro` CLI for plan-step updates and rule evidence
 
-## Quick Start
+## Requirements
+
+- Python `3.10+`
+- Node.js `20+`
+- npm
+- An OpenAI API key (`OPENAI_API_KEY`)
+
+## Install Zoro (one-time)
+
+Important:
+- You must install Zoro as a Python package before using it in any target repo.
+- This is what provides the `zoro` and `zoro-api` commands.
+
+1. Clone this repository:
 
 ```bash
-# 1. Install
-git clone https://github.com/jennygzma/zoro.git
-cd zoro
+git clone https://github.com/<your-org-or-user>/<your-repo>.git
+cd <your-repo>   # this is the zoro source repo
+```
+
+2. Create a Python env and install Zoro (required):
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
 pip install -e .
+```
 
-# 2. Initialize in YOUR project (not the zoro repo)
-cd ~/my-project/
-zoro init --user-name "Your Name"
+Windows PowerShell:
 
-# 3. Set up API key
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install -e .
+```
+
+3. Confirm the CLI is installed in your active environment:
+
+```bash
+zoro --help
+zoro-api --help
+```
+
+4. Install frontend dependencies (for the web UI):
+
+```bash
+npm install --prefix frontend
+```
+
+5. Configure environment variables:
+
+```bash
 cp .env.example .env
-# Edit .env: add your API key (see below for options)
 ```
 
-Done! Cline will now automatically use your learned rules.
+Then set at least:
 
-## LLM Provider Configuration
-
-Zoro supports multiple LLM providers. Choose the one that works best for your region:
-
-### OpenAI (Global)
-- Set `OPENAI_API_KEY` in your `.env` file
-- Works globally but may be restricted in China
-
-To configure your provider, edit the `.env` file and uncomment the appropriate settings.
-
-## How It Works
-
-1. **You work**: Build features with Cline as usual
-2. **Export chat**: Save conversation to `.zoro/chat_history/`
-3. **Process**: Run `zoro process` to extract patterns
-4. **Auto-apply**: Before each user message, Cline:
-   - Runs `zoro search "<task>"` 
-   - Reads relevant rules from `.clinerules/zoro_context.md`
-   - Applies your patterns automatically
-
-## Commands
-
-### `zoro init --user-name "Name"`
-Initialize in your project. Creates:
-- `.zoro/chat_history/` - Store exported chats here
-- `.zoro/generated/` - Rules saved here (gitignored)
-- `.clinerules/zoro_workflow.md` - Instructions for Cline
-
-**Run from**: Your project root
-
-### `zoro process `
-Learn rules from Cline chat export.
-
-Generates:
-- Workflow rules (how you prefer to work)
-- System rules (technical patterns)
-
-### `zoro search <query> [options]`
-Search your learned rules.
-
-**Options**:
-- `--type workflow|system` - Filter by type
-- `--limit N` - Number of results (default: 3)
-- `--output <file>` - Save to markdown file
-
-**Examples**:
-```bash
-zoro search "error handling"
-zoro search "React patterns" --type system --limit 5
+```env
+OPENAI_API_KEY=your_key_here
 ```
 
-## Using the Web UI (Optional)
+## Use Zoro In A Target Repo (recommended)
 
-To visualize and manage your rules/plans with the web interface:
+This is the key behavior:
+- `zoro-api` must be run from the target repo root.
+- `.zoro/` is created in whatever directory you run from.
+- The Python environment where you installed Zoro must be active.
+
+1. Open the repo you want Zoro to track:
 
 ```bash
-# 1. Start API from YOUR project directory
-cd ~/my-project/
+cd /path/to/your-target-repo
+```
+
+2. Initialize Zoro in that target repo:
+
+```bash
+zoro init --user-name "Your Name"
+```
+
+3. Start the backend from that same target repo:
+
+```bash
 zoro-api
+```
 
-# 2. In another terminal, start the frontend
-cd ~/path/to/zoro/frontend/
+4. In a second terminal, run the frontend from the Zoro source repo:
+
+```bash
+cd /path/to/<your-zoro-source-repo>/frontend
 npm run dev
 ```
 
-The API will read/write data in `~/my-project/.zoro/`, and the web UI will connect to it.
+5. Open:
+- Backend API: `http://localhost:5010`
+- Frontend UI: `http://127.0.0.1:5274`
 
-**Note**: The web UI works with one project at a time. To switch projects, stop the API and restart it from the new project directory.
+## Develop Zoro Itself (this repo)
 
-## Directory Structure
+If you are developing this repository directly, you can run everything from here:
 
+```bash
+zoro-api
 ```
-your-project/
-├── .zoro/
-│   ├── chat_history/          # Put exported Cline chats here
-│   └── generated/             # Rules stored here (auto-created)
-├── .clinerules/
-│   ├── zoro_workflow.md       # Instructions for Cline
-│   └── zoro_context.md        # Temp context (regenerated per task)
-└── .env                        # Your OpenAI API key
+
+## Supported Chat Sources
+
+- Currently supported: `codex`, `cline`
+- Recommended default: `codex`
+- Claude chat-history source support: coming soon
+
+You can set this in `.zoro/config.json`:
+
+```json
+{
+  "chat_history_source": "codex"
+}
 ```
+
+## Python Environment Notes
+
+- You only need one active Python environment with `zoro` installed.
+- That environment can live anywhere (for example in the Zoro source repo).
+- When using Zoro in another target repo, activate the same environment, then `cd` into the target repo and run `zoro` / `zoro-api`.
+
+`venv` vs Conda:
+- Use `venv` unless you already rely on Conda for your workflow.
+- Conda is optional; it is not required for Zoro.
+
+## Rules Setup In `.zoro`
+
+To seed rules manually in a target repo:
+
+```bash
+cd /path/to/your-target-repo
+mkdir -p .zoro/rules/unstructured
+```
+
+Add markdown files to `.zoro/rules/unstructured`, for example:
+
+```bash
+cat > .zoro/rules/unstructured/team-rules.md <<'EOF'
+# Backend Rules
+
+- Keep route handlers thin.
+- Keep business logic in service modules.
+- Use typed schemas for API responses.
+EOF
+```
+
+Then in the UI:
+- Open **Rules Management**
+- Click **Structure `file.md`** (or **Structure all pending files**)
+- Optional: use **Structure repo AGENTS.md** to import repo-root `AGENTS.md` directly
+
+Structured results are stored under `.zoro/rules/structured` (including `knowledge_base.json`).
+
+## Troubleshooting
+
+1. `OpenAI API key not found`
+- Ensure `.env` exists and includes `OPENAI_API_KEY`.
+
+2. Frontend can’t reach backend
+- Confirm backend is on `5010` and frontend is on `5274`.
+- Check browser console for CORS/API errors.
+
+3. Port already in use
+- Stop the process using `5010` or `5274`, then restart.
+
+4. “No codex/cline chat history found”
+- Zoro is local-history driven. Make sure your local chat history source exists and `.zoro/config.json` has the intended `chat_history_source`.
+
+## GitHub + Hosting (Short)
+
+If `zoro` is already used on your GitHub account:
+1. Rename the existing repo (for example `zoro-archive`), then create a new public `zoro`.
+2. Or publish this under an org namespace (recommended): `your-org/zoro`.
+
+Hosting is possible, but local-first is the easiest path today. If hosting:
+- Backend needs persistent storage for `.zoro/` and `OPENAI_API_KEY` in secrets.
+- Frontend can be static-hosted and pointed to backend via `VITE_API_BASE`.

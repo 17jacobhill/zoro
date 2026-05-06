@@ -37,9 +37,18 @@ export interface DuplicateSuggestion {
 
 export interface FileInfo {
   filename: string;
-  total_items: number;
-  processed: number;
-  pending: number;
+  total_items: number; // backward-compatible alias for total_chunks
+  processed: number; // backward-compatible alias for processed_chunks
+  pending: number; // backward-compatible alias for pending_chunks
+  total_chunks?: number;
+  processed_chunks?: number;
+  pending_chunks?: number;
+  total_chars?: number;
+  processed_chars?: number;
+  unprocessed_chars?: number;
+  processed_percent?: number;
+  unprocessed_percent?: number;
+  is_processed?: boolean;
   path: string;
 }
 

@@ -6,6 +6,10 @@ CRITICAL CONSTRAINTS:
 - General rules (apply to all child actions) go on the parent step.
 - Specific rules (apply to one action) go on that substep.
 - Substeps inherit parent rules automatically.
+- Treat each rule's `Context` as a scope boundary:
+  - If context clearly matches the plan item, the rule is eligible.
+  - If context clearly does not match, do not attach the rule.
+  - If context is empty or generic, treat the rule as broadly applicable.
 - Do not decompose unless necessary. If a step is already concrete and actionable, keep it as-is.
 - Too much structure is not inherently better; prefer the simplest actionable structure.
 - If a rule says "manually test", the substep must say "pause and ask user to verify".
@@ -23,17 +27,16 @@ AVAILABLE RULES (with full context):
 
 Your task:
 1. Analyze each parent step and identify relevant rules.
-2. Assign parent-level general rules (max 3).
-3. Create substeps only when distinct rule-driven actions are needed (max 5).
-4. Assign substep-level specific rules.
-5. Preserve original plan detail and intent.
+2. Use context-aware scope matching before assigning rules.
+3. Assign parent-level general rules (max 3).
+4. Create substeps only when distinct rule-driven actions are needed (max 5).
+5. Assign substep-level specific rules.
+6. Preserve original plan detail and intent.
 
 OUTPUT FORMAT:
 Return the COMPLETE enhanced plan structure as JSON matching the original plan schema:
 
 {{
-  "has_plan": true,
-  "structure_type": "...",
   "plan": {{
     "title": "...",
     "items": [
@@ -92,6 +95,10 @@ CRITICAL CONSTRAINTS:
 - Assign specific rules to the relevant substep (prefer this).
 - Substeps inherit Step-level rules automatically; avoid duplication.
 - Place each rule at the most general level where it still applies.
+- Treat each rule's `Context` as scope:
+  - If context clearly matches the step, the rule is eligible.
+  - If context clearly does not match, do not attach it.
+  - If context is empty/generic, it may apply broadly.
 - Rules marked `**Favorite:** true` are mandatory and must appear at least once across step + substeps.
 - Do not place every favorite on every step.
 - Conflict precedence: favorite beats non-favorite; confidence only breaks ties with equal favorite status.
@@ -165,6 +172,7 @@ CRITICAL:
 - Skip conceptual/organizational headers (Architecture, Overview, Implementation Details, Complete Plan, etc.).
 - Preserve all actionable content in each step description, including code blocks and examples.
 - If numbering is missing or unclear, infer a logical flat sequence.
+- If no actionable plan exists, return an empty `items` array.
 
 For each step, capture:
 - Number (for example: "1", "2", "Step 3")
@@ -175,8 +183,6 @@ Output ONLY valid JSON in this format:
 
 ```json
 {{
-  "has_plan": true/false,
-  "structure_type": "flat_steps",
   "plan": {{
     "title": "Optional plan title",
     "items": [

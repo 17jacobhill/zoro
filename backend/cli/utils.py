@@ -4,7 +4,12 @@ import sys
 from backend.utils import get_project_root
 from backend.plan_paths import get_existing_plan_markdown_path
 
-def resolve_file_path(file_path_str, default_dir=".zoro/chat_history"):
+
+AGENTS_PROTOCOL_START = "<!-- ZORO-PROTOCOL:START -->"
+AGENTS_PROTOCOL_END = "<!-- ZORO-PROTOCOL:END -->"
+
+
+def resolve_file_path(file_path_str, default_dir="."):
     file_path = Path(file_path_str)
     
     # If just filename, look in default directory
@@ -21,15 +26,10 @@ def print_section(title, width=80):
 def create_zoro_directories():
     root = get_project_root()
     dirs = [
-        root / ".zoro/chat_history",
-        root / ".zoro/generated",
-        root / ".zoro/generated/assistant",
-        root / ".zoro/chat_visualizations",
+        root / ".zoro/visualization",
         root / ".zoro/rules",
         root / ".zoro/rules/unstructured",
         root / ".zoro/rules/structured",
-        root / ".rules",
-        root / ".clinerules"
     ]
     
     print("Creating directories...")
@@ -45,8 +45,6 @@ def setup_gitignore():
     zoro_patterns = [
         "\n# Zoro learning system - user-specific data",
         ".zoro/",
-        ".rules/",
-        ".clinerules/",
         ".env"
     ]
     
@@ -72,7 +70,7 @@ def setup_gitignore():
 def detect_active_chat():
     plan_path = get_existing_plan_markdown_path(Path.cwd())
     if not plan_path.exists():
-        return "default"
+        return None
     
     with open(plan_path) as f:
         first_line = f.readline()
@@ -94,6 +92,64 @@ def load_template(template_name):
         sys.exit(1)
     
     return template_path.read_text()
+
+
+def _extract_agents_guidance_body(content: str) -> str:
+    lines = content.splitlines()
+    if lines and lines[0].lstrip().startswith("# "):
+        lines = lines[1:]
+    while lines and not lines[0].strip():
+        lines = lines[1:]
+    return "\n".join(lines).strip()
+
+
+def render_agents_protocol_block() -> str:
+    body = _extract_agents_guidance_body(load_template("agents_codex.md"))
+    return "\n".join(
+        [
+            AGENTS_PROTOCOL_START,
+            "## Zoro Workflow",
+            "",
+            body,
+            AGENTS_PROTOCOL_END,
+        ]
+    ).strip()
+
+
+def ensure_agents_protocol_file(file_path="AGENTS.md"):
+    path = Path(file_path)
+    managed_block = render_agents_protocol_block()
+    legacy_template = load_template("agents_codex.md").strip()
+    fresh_content = f"# AGENTS.md\n\n{managed_block}\n"
+
+    if not path.exists():
+        path.write_text(fresh_content, encoding="utf-8")
+        print(f"  ✓ Created {file_path}")
+        return True
+
+    existing = path.read_text(encoding="utf-8")
+    updated = existing
+
+    if AGENTS_PROTOCOL_START in existing and AGENTS_PROTOCOL_END in existing:
+        before, _, remainder = existing.partition(AGENTS_PROTOCOL_START)
+        _, _, after = remainder.partition(AGENTS_PROTOCOL_END)
+        separator = "\n\n" if before.strip() and not before.endswith("\n\n") else ""
+        updated = f"{before.rstrip()}{separator}{managed_block}{after}"
+    elif existing.strip() == legacy_template:
+        updated = fresh_content
+    elif existing.lstrip().startswith(legacy_template):
+        suffix = existing.lstrip()[len(legacy_template):].lstrip("\n")
+        updated = f"{managed_block}\n\n{suffix}" if suffix else f"{managed_block}\n"
+    else:
+        updated = f"{managed_block}\n\n{existing.lstrip()}"
+
+    if updated != existing:
+        path.write_text(updated, encoding="utf-8")
+        print(f"  ✓ Updated {file_path} with Zoro protocol guidance")
+        return True
+
+    print(f"  ⊗ {file_path} already contains the Zoro protocol guidance")
+    return False
 
 def create_template_file(file_path, template_name, overwrite=False):
     path = Path(file_path)

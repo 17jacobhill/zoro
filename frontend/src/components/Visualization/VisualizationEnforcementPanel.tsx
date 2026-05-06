@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Box, Typography, Stack, Chip, CircularProgress, IconButton, Tooltip } from '@mui/material';
-import { Close as CloseIcon } from '@mui/icons-material';
+import { Box, Typography, Stack, Chip, CircularProgress, IconButton } from '@mui/material';
+import { Close as CloseIcon, Check as CheckIcon, EditOutlined as EditOutlinedIcon, EditNoteOutlined as EditNoteOutlinedIcon } from '@mui/icons-material';
+import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import ScienceIcon from '@mui/icons-material/Science';
-import { Button } from '../../design-system/Button';
 import { Accordion } from '../../design-system/Accordion';
+import { CompactIconButton } from '../../design-system/CompactIconButton';
 import { TextField } from '../../design-system/TextField';
 import { colors } from '../../design-system/colors';
 import { api } from '../../services/api';
@@ -11,37 +12,13 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { prism } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { createRuleNoteKey, toRuleNoteRecord } from './ruleNotes';
 import type { RuleNoteRecord } from './ruleNotes';
-
-interface CodeBlock {
-  file_path: string;
-  code_snippet: string;
-  line_range?: string;
-}
-
-interface TestEvidence {
-  name: string;
-  command: string;
-  result: 'pass' | 'fail' | 'error';
-  output: string;
-  test_file: string;
-  test_code?: string;
-  enabled: boolean;
-}
-
-interface RuleVerification {
-  item_id?: string;
-  explanation: string;
-  code_blocks?: CodeBlock[];
-  verdict: 'pass' | 'fail' | 'unclear';
-  timestamp: string;
-  test_evidence?: TestEvidence;
-}
+import type { EvidenceRecord } from './evidence';
+import { getRuleVerificationRecordsForItem } from './evidence';
 
 interface Rule {
   category: string;
   text: string;
   context?: string;
-  verifications?: RuleVerification[];
   needs_strict_enforcement?: boolean;
   is_testable?: boolean;
   kb_item_id?: string;
@@ -64,13 +41,14 @@ interface VisualizationEnforcementPanelProps {
   chatId: string | null;
   selectedItemId: string | null;
   selectedItem: PlanItem | null;
+  evidence?: EvidenceRecord[];
   onClose?: () => void;
   onPlanUpdate?: () => Promise<void>;
   notesRefreshKey?: number;
   onRuleNotesSaved?: () => void;
 }
 
-export function VisualizationEnforcementPanel({ chatId, selectedItemId, selectedItem, onClose, onPlanUpdate, notesRefreshKey, onRuleNotesSaved }: VisualizationEnforcementPanelProps) {
+export function VisualizationEnforcementPanel({ chatId, selectedItemId, selectedItem, evidence = [], onClose, onPlanUpdate, notesRefreshKey, onRuleNotesSaved }: VisualizationEnforcementPanelProps) {
   const [config, setConfig] = useState<any>(null);
   const [enforcementData, setEnforcementData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -270,13 +248,12 @@ export function VisualizationEnforcementPanel({ chatId, selectedItemId, selected
               {savedText}
             </Typography>
             <Box sx={{ mt: 0.6 }}>
-              <Button
-                colorVariant="transparent"
-                sx={{ fontSize: '0.66rem', py: 0.2 }}
+              <CompactIconButton
+                label="Edit note"
+                icon={<EditOutlinedIcon sx={{ fontSize: 16 }} />}
+                tone="dark-green"
                 onClick={() => openNoteEditor(noteKey)}
-              >
-                Edit Note
-              </Button>
+              />
             </Box>
           </Box>
         );
@@ -284,13 +261,12 @@ export function VisualizationEnforcementPanel({ chatId, selectedItemId, selected
 
       return (
         <Box sx={{ mt: 1.0 }}>
-          <Button
-            colorVariant="transparent"
-            sx={{ fontSize: '0.66rem', py: 0.2 }}
+          <CompactIconButton
+            label="Add note"
+            icon={<EditNoteOutlinedIcon sx={{ fontSize: 16 }} />}
+            tone="dark-green"
             onClick={() => openNoteEditor(noteKey)}
-          >
-            Add Note
-          </Button>
+          />
         </Box>
       );
     }
@@ -304,7 +280,7 @@ export function VisualizationEnforcementPanel({ chatId, selectedItemId, selected
           placeholder="Add review note for this verification..."
           value={draft}
           onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [noteKey]: e.target.value }))}
-          inputProps={{ 'aria-label': 'Verification Note' }}
+          inputProps={{ 'aria-label': 'Proof Note' }}
           sx={{
             mt: 1.2,
             '& .MuiInputBase-input': { fontSize: '0.66rem' },
@@ -312,25 +288,23 @@ export function VisualizationEnforcementPanel({ chatId, selectedItemId, selected
           }}
         />
         <Box sx={{ mt: 0.6, display: 'flex', alignItems: 'center', gap: 0.8 }}>
-          <Button
-            colorVariant="green"
-            sx={{ fontSize: '0.68rem', py: 0.25 }}
+          <CompactIconButton
+            label="Save note"
+            icon={<CheckIcon sx={{ fontSize: 16 }} />}
+            tone="green"
             onClick={async () => {
               const nextRecords = updateRuleNote(noteKey, draft, noteMeta);
               const ok = await saveSingleNote(noteKey, nextRecords || undefined);
               if (ok) closeNoteEditor(noteKey);
             }}
-            disabled={noteSaveState[noteKey] === 'saving'}
-          >
-            {noteSaveState[noteKey] === 'saving' ? 'Saving...' : 'Save Note'}
-          </Button>
-          <Button
-            colorVariant="transparent"
-            sx={{ fontSize: '0.66rem', py: 0.2 }}
+            loading={noteSaveState[noteKey] === 'saving'}
+          />
+          <CompactIconButton
+            label="Cancel note editing"
+            icon={<CloseIcon sx={{ fontSize: 16 }} />}
+            tone="grey"
             onClick={() => closeNoteEditor(noteKey)}
-          >
-            Cancel
-          </Button>
+          />
           {noteSaveState[noteKey] === 'saved' && (
             <Typography sx={{ fontSize: '0.66rem', color: colors.green }}>
               Saved
@@ -406,21 +380,24 @@ export function VisualizationEnforcementPanel({ chatId, selectedItemId, selected
         {/* Enforce Button - Only show for leaf nodes in simple mode */}
         {config?.enforcement_mode === 'no-verification' && !hasChildren && (
           <Box sx={{ mb: 2 }}>
-            <Button
-              onClick={handleEnforce}
-              disabled={enforcing || loading}
-              fullWidth
-            >
-              {enforcing ? 'Enforcing...' : 'Enforce This Item'}
-            </Button>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <CompactIconButton
+                label={enforcing ? 'Enforcing this item' : 'Enforce this item'}
+                icon={<FactCheckOutlinedIcon sx={{ fontSize: 18 }} />}
+                tone="green"
+                onClick={handleEnforce}
+                disabled={loading}
+                loading={enforcing}
+              />
+            </Box>
             {enforceMessage && (
               <Box 
                 sx={{ 
                   mt: 1, 
                   p: 1.5, 
                   borderRadius: 1, 
-                  bgcolor: enforceMessage.type === 'success' ? '#f0f7ff' : '#fff3e0',
-                  border: `1px solid ${enforceMessage.type === 'success' ? '#e3f2fd' : '#ffb74d'}`
+                  bgcolor: enforceMessage.type === 'success' ? colors.surfaceInfo : colors.surfaceWarningStrong,
+                  border: `1px solid ${enforceMessage.type === 'success' ? colors.surfaceInfoBorder : colors.warningBorder}`
                 }}
               >
                 <Typography 
@@ -446,7 +423,7 @@ export function VisualizationEnforcementPanel({ chatId, selectedItemId, selected
         {config?.enforcement_mode === 'no-verification' && enforcementData && !loading ? (
           <>
             {/* Simple Mode: Display Enforcement Data */}
-            <Box sx={{ mb: 2, p: 2, bgcolor: '#f0f7ff', borderRadius: 1, border: '1px solid #e3f2fd' }}>
+            <Box sx={{ mb: 2, p: 2, bgcolor: colors.surfaceInfo, borderRadius: 1, border: `1px solid ${colors.surfaceInfoBorder}` }}>
               <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>
                 Detected Evidence
               </Typography>
@@ -521,8 +498,8 @@ export function VisualizationEnforcementPanel({ chatId, selectedItemId, selected
           </>
         ) : config?.enforcement_mode === 'no-verification' && !enforcementData && !loading ? (
           <>
-            <Box sx={{ mb: 2, p: 2, bgcolor: '#fff3e0', borderRadius: 1, border: '1px solid #ffb74d' }}>
-              <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#e65100' }}>
+            <Box sx={{ mb: 2, p: 2, bgcolor: colors.surfaceWarningStrong, borderRadius: 1, border: `1px solid ${colors.warningBorder}` }}>
+              <Typography variant="body2" sx={{ fontWeight: 'bold', color: colors.warningAccent }}>
                 Not enforced yet
               </Typography>
               <Typography variant="caption" color="text.secondary">
@@ -673,42 +650,45 @@ export function VisualizationEnforcementPanel({ chatId, selectedItemId, selected
                                 </Box>
                                 
                                 {(() => {
-                                  const rawVerifications = item.rule.verifications || [];
-                                  const verificationsForItem = rawVerifications
-                                    .map((verification, rawIndex) => ({ verification, rawIndex }))
-                                    .filter(({ verification }) => verification.item_id === selectedItemId);
+                                  const verificationsForItem = getRuleVerificationRecordsForItem(
+                                    evidence,
+                                    selectedItemId,
+                                    item.rule,
+                                  );
 
                                   if (verificationsForItem.length === 0) {
                                     return (
                                       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', py: 2, pl: 1 }}>
-                                        No verifications yet.
+                                        No proof records yet.
                                       </Typography>
                                     );
                                   }
 
                                   return (
                               <Stack spacing={2}>
-                                {verificationsForItem.map(({ verification, rawIndex }, listIndex) => {
+                                {verificationsForItem.map((verification, listIndex) => {
                                   const noteKey = createRuleNoteKey({
                                     source: 'rule-verification',
+                                    evidenceRecordId: verification.record_id,
                                     itemId: verification.item_id || selectedItemId,
                                     ruleKbItemId: item.rule.kb_item_id,
                                     ruleText: item.rule.text,
                                     timestamp: verification.timestamp || '',
-                                    index: rawIndex,
+                                    index: verification.record_index,
                                   });
                                   const noteMeta: Omit<RuleNoteRecord, 'note_key' | 'chat_id' | 'note_text'> = {
                                     rule_kb_item_id: item.rule.kb_item_id || null,
                                     rule_text: item.rule.text || '',
                                     plan_item_id: (verification.item_id || selectedItemId) || null,
+                                    evidence_record_id: verification.record_id,
                                     verification_timestamp: verification.timestamp || null,
-                                    verification_index: rawIndex,
+                                    verification_index: verification.record_index,
                                     source: 'rule-verification',
                                     verdict: verification.verdict || 'unclear',
                                     explanation: verification.explanation || '',
                                   };
                                   return (
-                                  <Box key={rawIndex} sx={{ pb: 2, pt: 1, px: 1, borderBottom: listIndex < verificationsForItem.length - 1 ? '1px solid' : 'none', borderColor: 'divider' }}>
+                                  <Box key={verification.record_id} sx={{ pb: 2, pt: 1, px: 1, borderBottom: listIndex < verificationsForItem.length - 1 ? '1px solid' : 'none', borderColor: 'divider' }}>
                                     <Chip
                                       label={verification.verdict.toUpperCase()}
                                       size="small"
@@ -723,8 +703,8 @@ export function VisualizationEnforcementPanel({ chatId, selectedItemId, selected
                                     <Typography variant="body2" sx={{ mb: 2, lineHeight: 1.6, color: 'text.primary' }}>
                                       {verification.explanation}
                                     </Typography>
-                                    {(verification.code_blocks || []).map((codeBlock, cbIndex) => (
-                                      <Box key={cbIndex} sx={{ mb: cbIndex < (verification.code_blocks || []).length - 1 ? 2 : 0 }}>
+                                    {(verification.artifacts || []).map((codeBlock, cbIndex) => (
+                                      <Box key={cbIndex} sx={{ mb: cbIndex < (verification.artifacts || []).length - 1 ? 2 : 0 }}>
                                         <Typography variant="caption" sx={{ display: 'block', color: colors.green, fontWeight: 600, mb: 0.5 }}>
                                           📄 {codeBlock.file_path}
                                           {codeBlock.line_range && ` (${codeBlock.line_range})`}
@@ -739,12 +719,12 @@ export function VisualizationEnforcementPanel({ chatId, selectedItemId, selected
                                               backgroundColor: 'white',
                                             }}
                                           >
-                                            {normalizeCode(codeBlock.code_snippet)}
+                                            {normalizeCode(codeBlock.code_snippet || '')}
                                           </SyntaxHighlighter>
                                         </Box>
                                       </Box>
                                     ))}
-                                    {verification.test_evidence && (
+                                    {verification.tests && (
                                       <Box sx={{ mt: 2, p: 2, borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
                                         <Typography variant="caption" sx={{ fontWeight: 600, color: colors.green, display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
                                           <ScienceIcon sx={{ fontSize: '0.95rem', color: colors.blue }} />
@@ -752,32 +732,32 @@ export function VisualizationEnforcementPanel({ chatId, selectedItemId, selected
                                         </Typography>
                                         <Stack spacing={1}>
                                           <Typography variant="caption">
-                                            <strong>Test:</strong> {verification.test_evidence.name}
+                                            <strong>Test:</strong> {verification.tests.name}
                                           </Typography>
-                                          <Typography variant="caption" sx={{ fontFamily: 'monospace', fontSize: '0.7rem', display: 'block', bgcolor: '#f8f8f8', p: 1, borderRadius: 0.5 }}>
-                                            {verification.test_evidence.command}
+                                          <Typography variant="caption" sx={{ fontFamily: 'monospace', fontSize: '0.7rem', display: 'block', bgcolor: colors.surfaceMutedAlt, p: 1, borderRadius: 0.5 }}>
+                                            {verification.tests.command}
                                           </Typography>
                                           <Box>
                                             <Chip
-                                              label={verification.test_evidence.result.toUpperCase()}
+                                              label={String(verification.tests.result || 'unknown').toUpperCase()}
                                               size="small"
                                               sx={{
-                                                bgcolor: getVerdictColor(verification.test_evidence.result),
+                                                bgcolor: getVerdictColor(String(verification.tests.result || 'unclear')),
                                                 color: 'white',
                                                 fontSize: '0.7rem',
                                                 fontWeight: 'bold',
                                               }}
                                             />
                                           </Box>
-                                          {verification.test_evidence.output && (
+                                          {verification.tests.output && (
                                             <Accordion title="Test Output" defaultOpen={false}>
-                                              <Box sx={{ bgcolor: '#f8f8f8', p: 1, borderRadius: 0.5, fontFamily: 'monospace', fontSize: '0.7rem', whiteSpace: 'pre-wrap' }}>
-                                                {verification.test_evidence.output}
+                                              <Box sx={{ bgcolor: colors.surfaceMutedAlt, p: 1, borderRadius: 0.5, fontFamily: 'monospace', fontSize: '0.7rem', whiteSpace: 'pre-wrap' }}>
+                                                {verification.tests.output}
                                               </Box>
                                             </Accordion>
                                           )}
-                                          {verification.test_evidence.test_code && (
-                                            <Accordion title={`Test Code: ${verification.test_evidence.test_file}`} defaultOpen={false}>
+                                          {verification.tests.test_code && (
+                                            <Accordion title={`Test Code: ${verification.tests.test_file}`} defaultOpen={false}>
                                               <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
                                                 <SyntaxHighlighter
                                                   language="python"
@@ -788,13 +768,13 @@ export function VisualizationEnforcementPanel({ chatId, selectedItemId, selected
                                                     backgroundColor: 'white',
                                                   }}
                                                 >
-                                                  {normalizeCode(verification.test_evidence.test_code)}
+                                                  {normalizeCode(verification.tests.test_code)}
                                                 </SyntaxHighlighter>
                                               </Box>
                                             </Accordion>
                                           )}
                                           <Typography variant="caption" sx={{ color: colors.green }}>
-                                            📄 {verification.test_evidence.test_file}
+                                            📄 {verification.tests.test_file}
                                           </Typography>
                                         </Stack>
                                       </Box>

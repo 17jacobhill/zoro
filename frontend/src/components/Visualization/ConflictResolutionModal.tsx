@@ -11,7 +11,10 @@ import {
   FormControlLabel,
   Chip,
 } from '@mui/material';
-import { Button } from '../../design-system/Button';
+import CloseIcon from '@mui/icons-material/Close';
+import CheckIcon from '@mui/icons-material/Check';
+import { alpha } from '@mui/material/styles';
+import { CompactIconButton } from '../../design-system/CompactIconButton';
 import { colors } from '../../design-system/colors';
 import { api } from '../../services/api';
 
@@ -111,8 +114,8 @@ export function ConflictResolutionModal({
       fullWidth
       PaperProps={{
         sx: {
-          bgcolor: '#1e1e1e',
-          color: '#e0e0e0',
+          bgcolor: colors.surfaceDark,
+          color: colors.textOnDark,
         }
       }}
     >
@@ -124,7 +127,7 @@ export function ConflictResolutionModal({
             size="small"
             sx={{
               bgcolor: getSeverityColor(conflict.severity),
-              color: '#ffffff',
+              color: colors.white,
               fontWeight: 'bold',
             }}
           />
@@ -136,7 +139,7 @@ export function ConflictResolutionModal({
           <Typography variant="subtitle2" color={colors.gold} gutterBottom>
             Why these rules conflict:
           </Typography>
-          <Typography variant="body2" sx={{ color: '#b0b0b0' }}>
+          <Typography variant="body2" sx={{ color: colors.textMutedOnDark }}>
             {conflict.explanation}
           </Typography>
         </Box>
@@ -159,7 +162,7 @@ export function ConflictResolutionModal({
                   borderRadius: 1,
                   p: 2,
                   mb: 2,
-                  bgcolor: selectedRuleIndex === actualIndex ? 'rgba(135, 174, 115, 0.1)' : 'transparent',
+                  bgcolor: selectedRuleIndex === actualIndex ? alpha(colors.green, 0.1) : 'transparent',
                   cursor: 'pointer',
                 }}
                 onClick={() => setSelectedRuleIndex(actualIndex)}
@@ -182,7 +185,7 @@ export function ConflictResolutionModal({
                           size="small"
                           sx={{
                             bgcolor: colors.blue,
-                            color: '#ffffff',
+                            color: colors.white,
                             fontSize: '0.75rem',
                           }}
                         />
@@ -203,7 +206,7 @@ export function ConflictResolutionModal({
                       </Typography>
 
                       {rule.reasoning && (
-                        <Box mt={1} p={1} bgcolor="rgba(0,0,0,0.2)" borderRadius={1}>
+                        <Box mt={1} p={1} bgcolor={alpha(colors.black, 0.2)} borderRadius={1}>
                           <Typography variant="caption" color={colors.gold}>
                             Why this rule was selected:
                           </Typography>
@@ -247,16 +250,21 @@ export function ConflictResolutionModal({
       </DialogContent>
 
       <DialogActions sx={{ borderTop: `1px solid ${colors.grey}`, p: 2 }}>
-        <Button onClick={onClose} disabled={resolving}>
-          Cancel
-        </Button>
-        <Button
+        <CompactIconButton
+          label="Cancel conflict resolution"
+          icon={<CloseIcon sx={{ fontSize: 17 }} />}
+          tone="grey"
+          onClick={onClose}
+          disabled={resolving}
+        />
+        <CompactIconButton
+          label="Resolve rule conflict"
+          icon={<CheckIcon sx={{ fontSize: 17 }} />}
+          tone="green"
           onClick={handleResolve}
           disabled={selectedRuleIndex === null || resolving}
-          colorVariant="green"
-        >
-          {resolving ? 'Resolving...' : 'Resolve Conflict'}
-        </Button>
+          loading={resolving}
+        />
       </DialogActions>
     </Dialog>
   );

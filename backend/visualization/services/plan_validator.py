@@ -1,10 +1,10 @@
-from pathlib import Path
 from typing import Tuple, Optional
 import json
+from backend.visualization.paths import get_existing_plan_path
 
 
 def _load_plan(chat_id: str) -> Optional[dict]:
-    plan_path = Path(f".zoro/generated/visualization/{chat_id}/plan.json")
+    plan_path = get_existing_plan_path(chat_id)
     if not plan_path.exists():
         return None
     

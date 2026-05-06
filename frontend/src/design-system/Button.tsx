@@ -28,21 +28,21 @@ const Button = ({
   
   if (colorVariant === "green") {
     color = colors.green;
-    textColor = "#ffffff";
+    textColor = colors.white;
   }
   if (colorVariant === "dark-green") {
     color = colors.darkGreen;
-    textColor = "#ffffff";
+    textColor = colors.white;
   }
   if (colorVariant === "red") {
     color = colors.red;
     borderColor = colors.red;
-    textColor = "#ffffff";
+    textColor = colors.white;
   }
   if (colorVariant === "blue") {
     color = colors.blue;
     borderColor = colors.blue;
-    textColor = "#ffffff";
+    textColor = colors.white;
   }
 
   let hoverColor: string = alpha(colors.green, 0.04);

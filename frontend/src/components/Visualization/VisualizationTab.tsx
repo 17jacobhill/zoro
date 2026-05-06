@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Box, Typography, IconButton, List, ListItem, ListItemText, ListItemButton, alpha } from '@mui/material';
+import { Box, Typography, List, ListItem, ListItemButton, alpha } from '@mui/material';
 import { Add, Chat, Delete } from '@mui/icons-material';
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import { Panel, PanelGroup } from 'react-resizable-panels';
 import { ChatVisualizationView } from '../ChatVisualizationView';
+import { IconActionButton } from '../../design-system/IconActionButton';
+import { PanelHeader } from '../../design-system/PanelHeader';
+import { PanelResizeHandle } from '../../design-system/PanelResizeHandle';
 import { api, type ChatVisualization } from '../../services/api';
 import { colors } from '../../design-system/colors';
 
@@ -39,33 +42,38 @@ export function VisualizationTab() {
   };
 
   return (
-    <Box sx={{ flex: 1, overflow: 'hidden' }}>
-      <PanelGroup direction="horizontal">
+    <Box sx={{ flex: 1, minHeight: 0, height: '100%', overflow: 'hidden' }}>
+      <PanelGroup direction="horizontal" style={{ height: '100%' }}>
         <Panel defaultSize={15} minSize={10}>
-          <Box sx={{ p: 2, height: '100%', overflow: 'auto' }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography sx={{ fontSize: '0.92rem', fontWeight: 600, lineHeight: 1.2 }}>
-                Sessions
-              </Typography>
-              <IconButton onClick={handleNewVisualization} sx={{ color: colors.green, '&:focus': { outline: 'none' } }} disableRipple>
-                <Add sx={{ fontSize: 18 }} />
-              </IconButton>
-            </Box>
+          <Box sx={{ p: 2, height: '100%', minHeight: 0, overflow: 'auto' }}>
+            <PanelHeader
+              title="Sessions"
+              actions={
+                <IconActionButton tone="green" aria-label="Create visualization" onClick={handleNewVisualization}>
+                  <Add sx={{ fontSize: 18 }} />
+                </IconActionButton>
+              }
+            />
             <List dense>
               {visualizations.map((vis) => (
                 <ListItem
                   key={vis.chat_id}
                   disablePadding
                   secondaryAction={
-                    <IconButton edge="end" aria-label="delete" onClick={() => handleDeleteVisualization(vis.chat_id)} disableRipple sx={{ '&:focus': { outline: 'none' } }}>
+                    <IconActionButton edge="end" tone="grey" aria-label="Delete visualization" onClick={() => handleDeleteVisualization(vis.chat_id)}>
                       <Delete sx={{ fontSize: 17 }} />
-                    </IconButton>
+                    </IconActionButton>
                   }
                 >
                   <ListItemButton
                     selected={vis.chat_id === selectedVis}
                     onClick={() => setSelectedVis(vis.chat_id)}
                     sx={{
+                      borderLeft: '3px solid transparent',
+                      borderRadius: 1,
+                      '&:hover': {
+                        bgcolor: alpha(colors.green, 0.04),
+                      },
                       '&.Mui-selected': {
                         bgcolor: alpha(colors.green, 0.08),
                         borderLeft: '3px solid',
@@ -93,9 +101,9 @@ export function VisualizationTab() {
             </List>
           </Box>
         </Panel>
-        <PanelResizeHandle style={{ width: '1px', backgroundColor: '#d0d0d0', cursor: 'col-resize' }} />
+        <PanelResizeHandle />
         <Panel>
-          <Box sx={{ p: 2, height: '100%', overflow: 'auto' }}>
+          <Box sx={{ p: 2, height: '100%', minHeight: 0, overflow: 'auto' }}>
             {selectedVis ? (
               <ChatVisualizationView chatId={selectedVis} onUpdateName={handleUpdateVisualizationName} />
             ) : (

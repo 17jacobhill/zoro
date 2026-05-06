@@ -9,11 +9,11 @@ import {
   IconButton,
   Typography,
   Chip,
-  CircularProgress,
-  InputAdornment
+  CircularProgress
 } from '@mui/material';
 import { Close as CloseIcon, Search as SearchIcon, Star as StarIcon, StarBorder as StarBorderIcon } from '@mui/icons-material';
 import { colors } from '../../design-system/colors';
+import { InputAdornment } from '../../design-system/InputAdornment';
 import { TextField } from '../../design-system/TextField';
 import { api } from '../../services/api';
 
@@ -175,7 +175,7 @@ const RuleSelectionModal: React.FC<RuleSelectionModalProps> = ({
             mb: 1.5,
             py: 1,
             px: 1.25,
-            bgcolor: '#f4faf1',
+            bgcolor: colors.surfaceGreenTint,
             borderRadius: 1,
             borderLeft: `3px solid ${colors.green}`
           }}>
@@ -203,8 +203,7 @@ const RuleSelectionModal: React.FC<RuleSelectionModalProps> = ({
           }}
           sx={{
             mb: 1.5,
-            '& .MuiInputBase-root': { borderRadius: 1.5 },
-            '& .MuiInputBase-input': { fontSize: '0.88rem', py: 1 }
+            '& .MuiInputBase-root': { borderRadius: 1.25 }
           }}
         />
 
@@ -221,10 +220,10 @@ const RuleSelectionModal: React.FC<RuleSelectionModalProps> = ({
         ) : (
           <Box
             sx={{
-              border: '1px solid rgba(0, 0, 0, 0.08)',
+              border: `1px solid ${colors.divider}`,
               borderRadius: 2,
               overflow: 'hidden',
-              bgcolor: '#ffffff'
+              bgcolor: colors.surface
             }}
           >
             {filteredRules.map((rule, index) => (
@@ -234,9 +233,9 @@ const RuleSelectionModal: React.FC<RuleSelectionModalProps> = ({
                   cursor: 'pointer',
                   px: 1.5,
                   py: 1.25,
-                  borderBottom: index < filteredRules.length - 1 ? '1px solid rgba(0, 0, 0, 0.08)' : 'none',
+                  borderBottom: index < filteredRules.length - 1 ? `1px solid ${colors.divider}` : 'none',
                   '&:hover': {
-                    bgcolor: '#f8fbf6'
+                    bgcolor: colors.surfaceTint
                   },
                   transition: 'background-color 0.15s ease'
                 }}
@@ -249,7 +248,7 @@ const RuleSelectionModal: React.FC<RuleSelectionModalProps> = ({
                         label={rule.category || 'uncategorized'}
                         size="small"
                         sx={{
-                          bgcolor: '#ecf6e8',
+                          bgcolor: colors.surfaceGreenSoft,
                           color: colors.darkGreen,
                           fontWeight: 600,
                           fontSize: '0.7rem',
@@ -259,10 +258,10 @@ const RuleSelectionModal: React.FC<RuleSelectionModalProps> = ({
                       {rule.is_favorite && (
                         <Chip
                           label="Favorite"
-                          size="small"
-                          sx={{
-                            bgcolor: '#fff8e8',
-                            color: '#9b6b00',
+                        size="small"
+                        sx={{
+                          bgcolor: colors.surfaceWarningAlt,
+                          color: colors.warningTextStrong,
                             fontWeight: 600,
                             fontSize: '0.7rem',
                             height: 22
@@ -272,10 +271,10 @@ const RuleSelectionModal: React.FC<RuleSelectionModalProps> = ({
                       {rule.is_strict && (
                         <Chip
                           label="Strict"
-                          size="small"
-                          sx={{
-                            bgcolor: '#ffeceb',
-                            color: '#a72525',
+                        size="small"
+                        sx={{
+                          bgcolor: colors.surfaceDanger,
+                          color: colors.dangerText,
                             fontWeight: 600,
                             fontSize: '0.7rem',
                             height: 22
@@ -285,10 +284,10 @@ const RuleSelectionModal: React.FC<RuleSelectionModalProps> = ({
                       {rule.is_testable && (
                         <Chip
                           label="Testable"
-                          size="small"
-                          sx={{
-                            bgcolor: '#ecf3ff',
-                            color: '#1d4f95',
+                        size="small"
+                        sx={{
+                          bgcolor: colors.surfaceInfoAlt,
+                          color: colors.infoText,
                             fontWeight: 600,
                             fontSize: '0.7rem',
                             height: 22

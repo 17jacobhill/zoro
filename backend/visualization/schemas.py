@@ -54,7 +54,6 @@ class Rule(BaseModel):
     reasoning: Optional[str] = Field(default=None, description="Detailed explanation of why this rule matches this plan item")
     context_match: Optional[float] = Field(default=None, description="Score 0-1 indicating how well rule context matches plan item")
     relevance_score: Optional[float] = Field(default=None, description="Overall relevance score 0-1")
-    verifications: List[RuleVerification] = Field(default_factory=list, description="List of verifications for this rule")
     needs_strict_enforcement: bool = Field(default=False, description="Whether CLI must verify this rule")
     is_testable: bool = Field(default=False, description="Whether this rule requires automated test evidence")
     kb_item_id: Optional[str] = Field(default=None, description="KB item ID if from favorites")
@@ -92,18 +91,23 @@ class PlanItem(BaseModel):
     inherited_rules: List[InheritedRule] = Field(default_factory=list, description="Rules inherited from parent items")
     conflicts: List[RuleConflict] = Field(default_factory=list, description="Rule conflicts for this item")
     has_unresolved_conflicts: bool = Field(default=False, description="Whether this item has unresolved rule conflicts")
-    step_verifications: List[StepVerification] = Field(default_factory=list, description="Step-level verifications (for leaf items)")
-    item_verifications: List[StepVerification] = Field(default_factory=list, description="Item-level verifications (for non-leaf items)")
     
     model_config = ConfigDict(extra="forbid")
 
 
-class ExtractedPlan(BaseModel):
-    has_plan: bool = Field(..., description="Whether a plan was found")
-    structure_type: str = Field(..., description="Plan structure type")
-    plan: dict = Field(default_factory=dict, description="Extracted plan data")
+class PlanRoot(BaseModel):
+    title: Optional[str] = Field(default=None, description="Optional plan title")
+    description: Optional[str] = Field(default=None, description="Optional plan description")
+    items: List[PlanItem] = Field(default_factory=list, description="Root plan items")
     
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
+
+
+class PlanDocument(BaseModel):
+    plan: PlanRoot = Field(default_factory=PlanRoot, description="Persisted plan data")
+    rules_retrieved: Optional[bool] = Field(default=None, description="Whether plan rules were attached")
+    
+    model_config = ConfigDict(extra="allow")
 
 
 class VizRequirement(BaseModel):

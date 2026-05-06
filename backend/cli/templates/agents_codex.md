@@ -1,11 +1,17 @@
-# Zoro + Codex Integration
+# AGENTS.md
 
-This repo uses Zoro planning and tracking. Read the live plan and rules here:
+Follow the Zoro workflow defined in `ZORO.md`.
 
-- `.rules/zoro_plan.md` (generated from plan JSON; always current)
-- `.clinerules/zoro_integration.md` (workflow + commands)
+Read these files before acting:
 
-If you are running Codex, set the chat history source in `.zoro/config.json`:
+- `ZORO.md`
+- `.zoro/CURRENT_PLAN.md`
+
+Session-start requirement:
+- On the first user message in a new coding session, respond in plan mode only.
+- Output only the implementation plan and wait for explicit approval before doing any implementation work.
+
+If you are running Codex, ensure `.zoro/config.json` contains:
 
 ```json
 {

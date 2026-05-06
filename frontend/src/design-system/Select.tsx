@@ -11,6 +11,7 @@ interface SelectProps extends Omit<MuiSelectProps, 'color'> {
 
 const Select = ({
   variant = "outlined",
+  size = "small",
   sx,
   colorVariant = 'green',
   ...props
@@ -22,7 +23,11 @@ const Select = ({
   return (
     <MuiSelect
       variant={variant}
+      size={size}
       sx={{
+        minHeight: size === 'small' ? 36 : undefined,
+        borderRadius: 1.25,
+        fontSize: '12px',
         '& .MuiOutlinedInput-notchedOutline': {
           borderColor: borderColor,
         },
@@ -50,12 +55,23 @@ const Select = ({
             borderColor: colors.grey,
           },
         },
+        '& .MuiSelect-select': {
+          fontSize: '12px',
+          lineHeight: 1.35,
+          display: 'flex',
+          alignItems: 'center',
+          minHeight: 'auto',
+        },
         ...sx,
       }}
       MenuProps={{
+        ...props.MenuProps,
         PaperProps: {
+          ...props.MenuProps?.PaperProps,
           sx: {
             '& .MuiMenuItem-root': {
+              fontSize: '12px',
+              minHeight: 32,
               '&:hover': {
                 backgroundColor: `${focusColor}20`,
               },
@@ -69,9 +85,9 @@ const Select = ({
                 backgroundColor: `${focusColor}20`,
               },
             },
+            ...props.MenuProps?.PaperProps?.sx,
           },
         },
-        ...props.MenuProps,
       }}
       {...props}
     />

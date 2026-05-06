@@ -1,7 +1,7 @@
-from pathlib import Path
-from typing import Optional, List
 import json
-import copy
+from pathlib import Path
+from typing import List, Optional
+
 from backend.utils import get_enforcement_mode
 from backend.plan_paths import get_existing_plan_markdown_path, get_plan_markdown_path
 
@@ -16,50 +16,31 @@ def find_item_by_id(items: list, item_id: str) -> Optional[dict]:
     return None
 
 def collect_rules_for_item(plan_data: dict, item_id: str) -> List[dict]:
-    def build_parent_map(items, parent=None, parent_map=None):
-        if parent_map is None:
-            parent_map = {}
-        for item in items:
-            current_item_id = item.get('id')
-            if current_item_id:
-                parent_map[current_item_id] = parent.get('id') if parent else None
-                if item.get('children'):
-                    build_parent_map(item['children'], item, parent_map)
-        return parent_map
-    
     items = plan_data.get('plan', {}).get('items', [])
-    parent_map = build_parent_map(items)
-    
     target_item = find_item_by_id(items, item_id)
     if not target_item:
         return []
-    
+
     collected = []
     seen_rules = set()
-    current_id = item_id
-    
-    while current_id:
-        current_item = find_item_by_id(items, current_id)
-        if current_item:
-            for idx, rule in enumerate(current_item.get('rules', [])):
-                rule_key = (rule.get('category', ''), rule.get('text', ''))
-                
-                if rule_key not in seen_rules:
-                    seen_rules.add(rule_key)
-                    source = 'self' if current_id == item_id else 'parent'
-                    collected.append({
-                        'rule': rule,
-                        'source': source,
-                        'source_id': current_id,
-                        'source_title': current_item.get('title', current_id),
-                        'is_inherited': False,
-                        'rule_index': idx
-                    })
-        current_id = parent_map.get(current_id)
-    
+
+    for idx, rule in enumerate(target_item.get('rules', [])):
+        rule_key = (rule.get('kb_item_id', ''), rule.get('category', ''), rule.get('text', ''))
+        if rule_key in seen_rules:
+            continue
+        seen_rules.add(rule_key)
+        collected.append({
+            'rule': rule,
+            'source': 'self',
+            'source_id': item_id,
+            'source_title': target_item.get('title', item_id),
+            'is_inherited': False,
+            'rule_index': idx
+        })
+
     for idx, inherited in enumerate(target_item.get('inherited_rules', [])):
-        rule = inherited['rule']
-        rule_key = (rule.get('category', ''), rule.get('text', ''))
+        rule = inherited.get('rule', {})
+        rule_key = (rule.get('kb_item_id', ''), rule.get('category', ''), rule.get('text', ''))
         if rule_key not in seen_rules:
             seen_rules.add(rule_key)
             collected.append({
@@ -74,44 +55,76 @@ def collect_rules_for_item(plan_data: dict, item_id: str) -> List[dict]:
     
     return collected
 
-def load_plan_data(chat_id: str) -> Optional[dict]:
-    plan_path = Path(f".zoro/generated/visualization/{chat_id}/plan.json")
-    if not plan_path.exists():
+
+def build_rules_in_focus_snapshot(plan_data: dict, step_id: str | None) -> Optional[dict]:
+    if not step_id:
         return None
-    
-    with open(plan_path) as f:
-        return json.load(f)
+
+    items = plan_data.get('plan', {}).get('items', [])
+    if not items:
+        return None
+
+    item = find_item_by_id(items, step_id)
+    if not item:
+        return None
+
+    serialized_rules = []
+    seen = set()
+
+    for rule in item.get('rules', []):
+        key = ('own', rule.get('category', ''), rule.get('text', ''))
+        if key in seen:
+            continue
+        seen.add(key)
+        serialized_rules.append(
+            {
+                'source': 'own',
+                'source_title': item.get('title', step_id),
+                'category': rule.get('category', 'uncategorized'),
+                'text': rule.get('text', ''),
+                'needs_strict_enforcement': bool(rule.get('needs_strict_enforcement', False)),
+                'is_testable': bool(rule.get('is_testable', False)),
+            }
+        )
+
+    for inherited in item.get('inherited_rules', []):
+        rule = inherited.get('rule', {})
+        source_title = inherited.get('source', 'Inherited')
+        key = ('inherited', source_title, rule.get('category', ''), rule.get('text', ''))
+        if key in seen:
+            continue
+        seen.add(key)
+        serialized_rules.append(
+            {
+                'source': 'inherited',
+                'source_title': source_title,
+                'category': rule.get('category', 'uncategorized'),
+                'text': rule.get('text', ''),
+                'needs_strict_enforcement': bool(rule.get('needs_strict_enforcement', False)),
+                'is_testable': bool(rule.get('is_testable', False)),
+            }
+        )
+
+    return {
+        'step_id': step_id,
+        'step_title': item.get('title', step_id),
+        'rules': serialized_rules,
+    }
+
+def load_plan_data(chat_id: str) -> Optional[dict]:
+    from backend.visualization.services.plan_persistence import load_plan_document
+
+    return load_plan_document(chat_id)
 
 def save_plan_data(chat_id: str, data: dict):
-    plan_path = Path(f".zoro/generated/visualization/{chat_id}/plan.json")
-    plan_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    with open(plan_path, 'w') as f:
-        json.dump(data, f, indent=2)
-    
-    refresh_plan_markdown(chat_id)
+    from backend.visualization.services.plan_persistence import save_plan_document
+
+    save_plan_document(chat_id, data)
 
 def refresh_plan_markdown(chat_id: str):
-    from backend.visualization.services.visualization_manager import _load_metadata
-    metadata = _load_metadata(chat_id)
-    if not metadata:
-        return
+    from backend.visualization.services.plan_persistence import refresh_plan_markdown as refresh_plan_markdown_document
 
-    plan_file = Path(f".zoro/generated/visualization/{chat_id}/plan.json")
-    if not plan_file.exists():
-        return
-
-    with open(plan_file, 'r') as f:
-        plan_data = json.load(f)
-
-    tracking = metadata.get("plan_tracking", {})
-    chat_name = metadata.get("name", "Unnamed")
-    markdown = plan_to_markdown(chat_id, chat_name, plan_data, tracking)
-    
-    plan_md_path = get_plan_markdown_path(Path.cwd())
-    plan_md_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(plan_md_path, 'w', encoding='utf-8') as f:
-        f.write(markdown)
+    refresh_plan_markdown_document(chat_id)
 
 def flatten_plan_items(items: list, parent_prefix="") -> list:
     flat = []
@@ -130,12 +143,53 @@ def flatten_plan_items(items: list, parent_prefix="") -> list:
     return flat
 
 
+def collect_leaf_items(items: list) -> list[dict]:
+    leaves = []
+    for item in items:
+        children = item.get("children", [])
+        if children:
+            leaves.extend(collect_leaf_items(children))
+        else:
+            leaves.append(item)
+    return leaves
+
+
+def get_next_pending_leaf_item(plan_data: dict, tracking: dict, after_item_id: str | None = None) -> Optional[dict]:
+    leaf_items = collect_leaf_items(plan_data.get("plan", {}).get("items", []))
+    if not leaf_items:
+        return None
+
+    start_index = 0
+    if after_item_id:
+        for idx, item in enumerate(leaf_items):
+            if item.get("id") == after_item_id:
+                start_index = idx + 1
+                break
+
+    remaining = leaf_items[start_index:] + leaf_items[:start_index]
+    for item in remaining:
+        status = tracking.get(item.get("id", ""), "pending")
+        if status != "completed":
+            return item
+    return None
+
+
 def plan_to_markdown(chat_id: str, chat_name: str, plan_data: dict, tracking: dict) -> str:
     mode = get_enforcement_mode()
     items = plan_data.get("plan", {}).get("items", [])
     
     md = f"# Visualization Plan: {chat_name or 'Unnamed'} ({chat_id})\n\n"
     md += "**Rule flags:** [STRICT] requires explicit verification before completion. [TESTABLE] requires test evidence when verifying.\n\n"
+    next_item = get_next_pending_leaf_item(plan_data, tracking)
+    if next_item:
+        next_item_id = next_item.get("id", "")
+        next_number = next_item.get("number", "")
+        next_title = next_item.get("title", "")
+        next_status = tracking.get(next_item_id, "pending")
+        md += f"**Next Step:** {next_number} `{next_item_id}` - {next_title} ({next_status})\n"
+        md += f"**Run Next:** `zoro update-step {next_item_id} in_progress`\n\n"
+    else:
+        md += "**Next Step:** All leaf steps are complete.\n\n"
     md += "## Items\n\n"
     
     def format_rule_flags(rule: dict) -> str:
@@ -171,8 +225,8 @@ def plan_to_markdown(chat_id: str, chat_name: str, plan_data: dict, tracking: di
             md += f"{indent}{description}\n\n"
         
         md += f"{indent}**Tracking:**\n"
-        md += f"{indent}- Start: `zoro viz-update {item_id} in_progress`\n"
-        md += f"{indent}- Complete: `zoro viz-update {item_id} completed`\n\n"
+        md += f"{indent}- Start: `zoro update-step {item_id} in_progress`\n"
+        md += f"{indent}- Complete: `zoro update-step {item_id} completed`\n\n"
         
         if has_unresolved_conflicts and conflicts:
             md += f"{indent}⚠️ **RULE CONFLICTS DETECTED**\n\n"

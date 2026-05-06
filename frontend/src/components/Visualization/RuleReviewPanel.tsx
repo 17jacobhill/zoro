@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Box, Typography, Chip, Stack, Dialog, DialogTitle, DialogContent, DialogActions, Alert, IconButton, Tooltip } from '@mui/material';
-import { Close as CloseIcon, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon, EditOutlined as EditOutlinedIcon, Check as CheckIcon, AutoFixHigh as AutoFixHighIcon } from '@mui/icons-material';
+import { Close as CloseIcon, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon, EditOutlined as EditOutlinedIcon, EditNoteOutlined as EditNoteOutlinedIcon, Check as CheckIcon, AutoFixHigh as AutoFixHighIcon } from '@mui/icons-material';
 import { Accordion } from '../../design-system/Accordion';
-import { Button } from '../../design-system/Button';
+import { CompactIconButton } from '../../design-system/CompactIconButton';
 import { TextField } from '../../design-system/TextField';
 import { colors } from '../../design-system/colors';
 import { api } from '../../services/api';
 import { createRuleNoteKey, toRuleNoteRecord } from './ruleNotes';
 import type { RuleNoteRecord } from './ruleNotes';
+import type { EvidenceRecord } from './evidence';
+import { makeEvidenceRuleKey } from './evidence';
 
 interface RuleReviewPanelProps {
   chatId: string;
   plan: any;
+  evidence: EvidenceRecord[];
   onItemSelect?: (itemId: string) => void;
   onPlanUpdate?: (updatedPlan: any) => void;
   notesRefreshKey?: number;
@@ -44,6 +47,7 @@ interface ReviewRule {
 }
 
 interface VerificationEntry {
+  evidenceRecordId: string;
   noteKey: string;
   itemId: string;
   itemLabel: string;
@@ -105,34 +109,6 @@ type DiffPart = {
   kind: 'same' | 'add' | 'del';
 };
 
-const MOCK_BATCH_REFINE_DELAY_MS = 5_000;
-
-const MOCK_BATCH_REFINEMENTS = [
-  {
-    ruleLabel: 'RULE B',
-    oldContent: 'Ensure all schema changes properly backfill or migrate existing data.',
-    newContent:
-      'Ensure all schema changes properly backfill or migrate existing data. Include a short note at the top of the migration file explaining how to run it, and check with the user before executing the migration.',
-  },
-  {
-    ruleLabel: 'RULE A',
-    oldContent: 'Always ask the user before making design decisions.',
-    newContent:
-      'Always ask the user before making design decisions. When appropriate, prefer minimal icons and avoid overly wordy button labels unless the user asks otherwise.',
-  },
-  {
-    ruleLabel: 'RULE J',
-    oldContent:
-      'Every new AI endpoint must be validated end-to-end on both happy path and error path before completion.',
-    newContent:
-      'Every new AI endpoint must be validated end-to-end on both happy path and error path before completion. Test more than one error path, including cases where the LLM response is truncated or does not return valid JSON.',
-  },
-] as const;
-
-function normalizeText(input: string): string {
-  return (input || '').trim().toLowerCase().replace(/\s+/g, ' ');
-}
-
 function safeNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
@@ -142,14 +118,20 @@ function hasFieldChange(before: string | null | undefined, after: string | null 
 }
 
 function makeRuleKey(rule: { kb_item_id?: string; text?: string; content?: string }): string {
-  if (rule.kb_item_id) return `kb:${rule.kb_item_id}`;
-  return `txt:${normalizeText(rule.text || rule.content || '')}`;
+  return makeEvidenceRuleKey(rule);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
+function isPersistedRuleInKnowledgeBase(rule: { kb_item_id?: string }): boolean {
+  return Boolean(rule.kb_item_id && !String(rule.kb_item_id).startsWith('manual-'));
+}
+
+function emitKnowledgeBaseRefresh(newlyAddedIds: string[] = []) {
+  window.dispatchEvent(new CustomEvent('kb-process-complete', {
+    detail: {
+      newly_added_ids: newlyAddedIds,
+      total_added: newlyAddedIds.length,
+    },
+  }));
 }
 
 function tokenizeForDiff(text: string): string[] {
@@ -223,9 +205,9 @@ function InlineDiffText({ before, after }: { before: string; after: string }) {
           component="span"
           sx={
             part.kind === 'add'
-              ? { bgcolor: '#dff3df', color: '#1b5e20', borderRadius: 0.45, px: 0.08 }
+              ? { bgcolor: colors.surfaceSuccessStrong, color: colors.successText, borderRadius: 0.45, px: 0.08 }
               : part.kind === 'del'
-                ? { bgcolor: '#ffeceb', color: '#a72525', textDecoration: 'line-through', borderRadius: 0.45, px: 0.08 }
+                ? { bgcolor: colors.surfaceDanger, color: colors.dangerText, textDecoration: 'line-through', borderRadius: 0.45, px: 0.08 }
                 : undefined
           }
         >
@@ -236,7 +218,7 @@ function InlineDiffText({ before, after }: { before: string; after: string }) {
   );
 }
 
-export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, notesRefreshKey, onRuleNotesSaved }: RuleReviewPanelProps) {
+export function RuleReviewPanel({ chatId, plan, evidence, onItemSelect, onPlanUpdate, notesRefreshKey, onRuleNotesSaved }: RuleReviewPanelProps) {
   const [favorites, setFavorites] = useState<FavoriteRule[]>([]);
   const [noteRecords, setNoteRecords] = useState<Record<string, RuleNoteRecord>>({});
   const [reviewRuleKeys, setReviewRuleKeys] = useState<string[]>([]);
@@ -366,7 +348,6 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
 
   const usage = useMemo(() => {
     const usageMap = new Map<string, RuleUsage>();
-    const seenEntryKeys = new Map<string, Set<string>>();
     const itemLabelById = new Map<string, string>();
     const itemDescriptionById = new Map<string, string>();
     const reviewRuleByKey = new Map<string, ReviewRule>();
@@ -385,80 +366,54 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
 
     indexItems(plan?.plan?.items || []);
 
-    const walk = (items: any[]) => {
-      for (const item of items || []) {
-        const allRules = [
-          ...(item.rules || []).map((r: any) => ({ ...r, _source: 'own' })),
-          ...(item.inherited_rules || []).map((ir: any) => ({ ...(ir.rule || {}), _source: 'inherited' })),
-        ];
-        for (const rawRule of allRules) {
-          const rawRuleKey = makeRuleKey({
-            kb_item_id: rawRule.kb_item_id,
-            text: rawRule.text,
-            content: rawRule.content,
-          });
-          const targetRule = reviewRuleByKey.get(rawRuleKey);
-          if (!targetRule) continue;
-          const target = usageMap.get(targetRule.key);
-          if (!target) continue;
-          if (!seenEntryKeys.has(targetRule.key)) seenEntryKeys.set(targetRule.key, new Set<string>());
-          const seenForRule = seenEntryKeys.get(targetRule.key)!;
+    for (const record of evidence || []) {
+      if (record.source !== 'rule-verification') continue;
+      const rawRuleKey = makeRuleKey({
+        kb_item_id: record.rule_kb_item_id || undefined,
+        text: record.rule_text,
+      });
+      const targetRule = reviewRuleByKey.get(rawRuleKey);
+      if (!targetRule) continue;
+      const target = usageMap.get(targetRule.key);
+      if (!target) continue;
 
-          const rawVerifications = rawRule.verifications || [];
-          rawVerifications
-            .map((verification: any, rawIndex: number): { verification: any; rawIndex: number } => ({ verification, rawIndex }))
-            .forEach((entry: { verification: any; rawIndex: number }) => {
-            const { verification, rawIndex } = entry;
-            const scopedItemId = verification.item_id || item.id || '';
-            const dedupeKey = [
-              scopedItemId,
-              rawRule.kb_item_id || targetRule.kb_item_id || '',
-              verification.timestamp || '',
-              verification.verdict || 'unclear',
-              verification.explanation || '',
-            ].join('||');
-            if (seenForRule.has(dedupeKey)) return;
-            seenForRule.add(dedupeKey);
-            const noteKey = createRuleNoteKey({
-              source: 'rule-verification',
-              itemId: scopedItemId,
-              ruleKbItemId: rawRule.kb_item_id || targetRule.kb_item_id,
-              ruleText: rawRule.text || targetRule.content,
-              timestamp: verification.timestamp || '',
-              index: rawIndex,
-            });
+      const scopedItemId = String(record.item_id || '');
+      const noteKey = createRuleNoteKey({
+        source: 'rule-verification',
+        evidenceRecordId: record.record_id,
+        itemId: scopedItemId,
+        ruleKbItemId: record.rule_kb_item_id || targetRule.kb_item_id,
+        ruleText: record.rule_text || targetRule.content,
+        timestamp: record.timestamp || '',
+        index: record.record_index,
+      });
 
-            target.entries.push({
-              noteKey,
-              itemId: scopedItemId,
-              itemLabel: itemLabelById.get(scopedItemId) || `${item.number || ''} ${item.title || ''}`.trim(),
-              itemDescription: itemDescriptionById.get(scopedItemId) || (item.description || '').trim(),
-              verdict: verification.verdict || 'unclear',
-              explanation: verification.explanation || '',
-              timestamp: verification.timestamp || '',
-              codeBlocks: verification.code_blocks || [],
-              testEvidence: verification.test_evidence || undefined,
-              noteMeta: {
-                rule_kb_item_id: rawRule.kb_item_id || targetRule.kb_item_id || null,
-                rule_text: rawRule.text || targetRule.content || '',
-                plan_item_id: scopedItemId || null,
-                verification_timestamp: verification.timestamp || null,
-                verification_index: rawIndex,
-                source: 'rule-verification',
-                verdict: verification.verdict || 'unclear',
-                explanation: verification.explanation || '',
-              },
-            });
-          });
-        }
-
-        if (item.children?.length) walk(item.children);
-      }
-    };
-
-    walk(plan?.plan?.items || []);
+      target.entries.push({
+        evidenceRecordId: record.record_id,
+        noteKey,
+        itemId: scopedItemId,
+        itemLabel: itemLabelById.get(scopedItemId) || scopedItemId,
+        itemDescription: itemDescriptionById.get(scopedItemId) || '',
+        verdict: record.verdict || 'unclear',
+        explanation: record.explanation || '',
+        timestamp: record.timestamp || '',
+        codeBlocks: record.artifacts || [],
+        testEvidence: record.tests || undefined,
+        noteMeta: {
+          rule_kb_item_id: record.rule_kb_item_id || targetRule.kb_item_id || null,
+          rule_text: record.rule_text || targetRule.content || '',
+          plan_item_id: scopedItemId || null,
+          evidence_record_id: record.record_id,
+          verification_timestamp: record.timestamp || null,
+          verification_index: record.record_index,
+          source: 'rule-verification',
+          verdict: record.verdict || 'unclear',
+          explanation: record.explanation || '',
+        },
+      });
+    }
     return Array.from(usageMap.values());
-  }, [plan, reviewRules]);
+  }, [evidence, plan, reviewRules]);
 
   const filteredSessionRules = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -488,36 +443,22 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
       }
     };
 
-    const walk = (items: any[]) => {
-      for (const item of items || []) {
-        const allRules = [
-          ...(item.rules || []).map((r: any) => ({ ...r, _source: 'own' })),
-          ...(item.inherited_rules || []).map((ir: any) => ({ ...(ir.rule || {}), _source: 'inherited' })),
-        ];
-        for (const rawRule of allRules) {
-          const ruleKey = makeRuleKey({
-            kb_item_id: rawRule.kb_item_id,
-            text: rawRule.text,
-            content: rawRule.content,
-          });
-          const verifications = rawRule.verifications || [];
-          if (!ruleKey || !verifications.length) continue;
-          if (!byRuleKey.has(ruleKey)) byRuleKey.set(ruleKey, new Set<string>());
-          const bucket = byRuleKey.get(ruleKey)!;
-          for (const verification of verifications) {
-            const scopedItemId = verification.item_id || item.id || '';
-            const stepLabel = itemLabelById.get(scopedItemId) || `${item.number || ''} ${item.title || ''}`.trim();
-            if (stepLabel) bucket.add(stepLabel);
-          }
-        }
-        if (item.children?.length) walk(item.children);
-      }
-    };
-
     indexItems(plan?.plan?.items || []);
-    walk(plan?.plan?.items || []);
+    for (const record of evidence || []) {
+      if (record.source !== 'rule-verification') continue;
+      const ruleKey = makeRuleKey({
+        kb_item_id: record.rule_kb_item_id || undefined,
+        text: record.rule_text,
+      });
+      if (!ruleKey) continue;
+      if (!byRuleKey.has(ruleKey)) byRuleKey.set(ruleKey, new Set<string>());
+      const bucket = byRuleKey.get(ruleKey)!;
+      const scopedItemId = String(record.item_id || '');
+      const stepLabel = itemLabelById.get(scopedItemId) || scopedItemId;
+      if (stepLabel) bucket.add(stepLabel);
+    }
     return byRuleKey;
-  }, [plan]);
+  }, [evidence, plan]);
 
   const persistAllNotes = async (): Promise<boolean> => {
     try {
@@ -558,72 +499,12 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
   const resolveExistingNote = (entry: VerificationEntry): { key: string; note: RuleNoteRecord } | null => {
     const direct = noteRecords[entry.noteKey];
     if (direct) return { key: entry.noteKey, note: direct };
-    const source = entry.noteMeta.source || 'rule-verification';
-    const itemId = entry.noteMeta.plan_item_id || entry.itemId || null;
-    const ruleText = normalizeText(entry.noteMeta.rule_text || '');
-    const ruleKbItemId = entry.noteMeta.rule_kb_item_id || null;
-    const timestamp = entry.noteMeta.verification_timestamp || entry.timestamp || null;
-    const verificationIndex = safeNumber(entry.noteMeta.verification_index);
-
-    const allCandidates = Object.values(noteRecords).filter((note) => {
-      if ((note.source || 'rule-verification') !== source) return false;
-      const noteRuleText = normalizeText(note.rule_text || '');
-      const sameRuleText = !!ruleText && noteRuleText === ruleText;
-      const sameRuleKb = !!ruleKbItemId && (note.rule_kb_item_id || null) === ruleKbItemId;
-      return sameRuleText || sameRuleKb;
-    });
-
-    const pickLatest = (notes: RuleNoteRecord[]): { key: string; note: RuleNoteRecord } | null => {
-      if (!notes.length) return null;
-      const sorted = [...notes].sort((a, b) => {
-        const aTime = Date.parse(a.updated_at || a.created_at || '');
-        const bTime = Date.parse(b.updated_at || b.created_at || '');
-        return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
-      });
-      return { key: sorted[0].note_key, note: sorted[0] };
-    };
-
-    const byItemId = itemId ? allCandidates.filter((n) => (n.plan_item_id || null) === itemId) : [];
-    const noItemIdCandidates = allCandidates.filter((n) => !(n.plan_item_id || '').trim());
-
-    // Strict rule: same rule + same plan item + same verification pointer.
-    if (verificationIndex !== null) {
-      const byIndex = byItemId.filter((n) => safeNumber(n.verification_index) === verificationIndex);
-      const picked = pickLatest(byIndex);
-      if (picked) return picked;
+    const byEvidenceRecordId = Object.values(noteRecords).find(
+      (note) => (note.evidence_record_id || null) === entry.evidenceRecordId
+    );
+    if (byEvidenceRecordId) {
+      return { key: byEvidenceRecordId.note_key, note: byEvidenceRecordId };
     }
-    if (timestamp) {
-      const byTimestamp = byItemId.filter((n) => (n.verification_timestamp || null) === timestamp);
-      const picked = pickLatest(byTimestamp);
-      if (picked) return picked;
-    }
-    const pickedByItem = pickLatest(byItemId);
-    if (pickedByItem) return pickedByItem;
-
-    // Controlled fallback:
-    // 1) allow cross-item only when BOTH timestamp and index match exactly.
-    if (verificationIndex !== null && timestamp) {
-      const strictCrossItem = allCandidates.filter(
-        (n) =>
-          safeNumber(n.verification_index) === verificationIndex &&
-          (n.verification_timestamp || null) === timestamp
-      );
-      const picked = pickLatest(strictCrossItem);
-      if (picked) return picked;
-    }
-    // 2) fallback to legacy notes missing plan_item_id only.
-    if (verificationIndex !== null) {
-      const byIndex = noItemIdCandidates.filter((n) => safeNumber(n.verification_index) === verificationIndex);
-      const picked = pickLatest(byIndex);
-      if (picked) return picked;
-    }
-    if (timestamp) {
-      const byTimestamp = noItemIdCandidates.filter((n) => (n.verification_timestamp || null) === timestamp);
-      const picked = pickLatest(byTimestamp);
-      if (picked) return picked;
-    }
-    const pickedNoItem = pickLatest(noItemIdCandidates);
-    if (pickedNoItem) return pickedNoItem;
     return null;
   };
 
@@ -690,6 +571,22 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
       testCode: string;
     }>;
 
+  const buildNotesUsedForRuleUsage = (target: RuleUsage) =>
+    getRefineNotes(target).map((n) => ({
+      itemLabel: n.itemLabel,
+      verdict: n.verdict,
+      noteText: n.noteText,
+      verificationIndex: n.verificationIndex,
+      verificationTimestamp: n.verificationTimestamp,
+      explanation: n.explanation,
+      codeEvidence: n.codeEvidence,
+      testEvidence: n.testEvidence,
+      codeSnippet: n.codeSnippet,
+      testCommand: n.testCommand,
+      testOutput: n.testOutput,
+      testCode: n.testCode,
+    }));
+
   const noteCoverageByRuleKey = useMemo(() => {
     const coverage = new Map<string, { withNotes: number; total: number }>();
     for (const ruleUsage of usage) {
@@ -732,8 +629,8 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
 
     const contextParts = [
       target.rule.context || '',
-      'Refine this rule based on user notes tied to concrete task verifications.',
-      noteLines.length ? `Verification review notes:\n${noteLines.join('\n')}` : 'No notes were provided.',
+      'Refine this rule based on user notes tied to concrete task proof records.',
+      noteLines.length ? `Proof review notes:\n${noteLines.join('\n')}` : 'No notes were provided.',
     ].filter(Boolean);
 
     return contextParts.join('\n\n');
@@ -754,28 +651,40 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
     return result.refined as RefinedRuleDraft;
   };
 
-  const getMockBatchRefineResult = (target: RuleUsage): RefinedRuleDraft | null => {
-    const normalizedTitle = normalizeText(target.rule.title || '');
-    const normalizedContent = normalizeText(target.rule.content || '');
-    const match = MOCK_BATCH_REFINEMENTS.find((candidate) => {
-      return (
-        normalizedTitle === normalizeText(candidate.ruleLabel) ||
-        normalizedContent === normalizeText(candidate.oldContent)
-      );
-    });
-
-    if (!match) return null;
-
-    return {
-      title: target.rule.title || match.ruleLabel,
-      content: match.newContent,
-      confidence: 0.88,
-      decay: 0.35,
-      confidence_reasoning: 'Mocked batch refine result returned from the current review flow.',
-      decay_reasoning: 'Mocked batch refine result returned from the current review flow.',
-      context: target.rule.context || null,
-      evidence: target.rule.evidence || null,
+  const persistRuleToKnowledgeBase = async (
+    target: RuleUsage,
+    draft: RefinedRuleDraft
+  ): Promise<{ itemId: string | null; created: boolean }> => {
+    const payload = {
+      type: 'rule' as const,
+      category: target.rule.category,
+      title: draft.title,
+      content: draft.content,
+      context: draft.context,
+      evidence: draft.evidence,
+      confidence: draft.confidence,
+      decay: draft.decay,
+      confidence_reasoning: draft.confidence_reasoning,
+      decay_reasoning: draft.decay_reasoning,
+      is_strict: target.rule.is_strict,
+      is_testable: target.rule.is_strict && target.rule.is_testable,
+      // Avoid duplicating old manual favorites if this save is the first KB-backed copy.
+      is_favorite: isPersistedRuleInKnowledgeBase(target.rule) ? target.rule.is_favorite : false,
     };
+
+    if (isPersistedRuleInKnowledgeBase(target.rule) && target.rule.kb_item_id) {
+      const result = await api.updateKBItem(target.rule.kb_item_id, payload);
+      if (!result.success) {
+        throw new Error('Failed to update rule in Rules Management.');
+      }
+      return { itemId: target.rule.kb_item_id, created: false };
+    }
+
+    const result = await api.createKBItem(payload);
+    if (!result.success || !result.item) {
+      throw new Error('Failed to save rule into Rules Management.');
+    }
+    return { itemId: result.item.item_id || null, created: true };
   };
 
   const runRefine = async () => {
@@ -800,24 +709,11 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
 
   const updateRule = async () => {
     if (!refineTarget || !refined) return;
-    if (!refineTarget.rule.kb_item_id) {
-      setRefineError('Only rules saved in Rules Management can be updated.');
-      return;
-    }
     setIsUpdating(true);
     setRefineError('');
     try {
-      await api.updateKBItem(refineTarget.rule.kb_item_id, {
-        title: refined.title,
-        content: refined.content,
-        category: refineTarget.rule.category,
-        context: refined.context,
-        evidence: refined.evidence,
-        confidence: refined.confidence,
-        decay: refined.decay,
-        confidence_reasoning: refined.confidence_reasoning,
-        decay_reasoning: refined.decay_reasoning,
-      });
+      const saveResult = await persistRuleToKnowledgeBase(refineTarget, refined);
+      emitKnowledgeBaseRefresh(saveResult.created && saveResult.itemId ? [saveResult.itemId] : []);
       setRefinedRuleStatusByKey((prev) => ({ ...prev, [refineTarget.rule.key]: 'updated' }));
       setRefineTarget(null);
       setRefined(null);
@@ -857,70 +753,22 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
         ruleUsage,
         refined: null,
         status: 'pending',
-        notesUsed: getRefineNotes(ruleUsage).map((n) => ({
-          itemLabel: n.itemLabel,
-          verdict: n.verdict,
-          noteText: n.noteText,
-          verificationIndex: n.verificationIndex,
-          verificationTimestamp: n.verificationTimestamp,
-          explanation: n.explanation,
-          codeEvidence: n.codeEvidence,
-          testEvidence: n.testEvidence,
-          codeSnippet: n.codeSnippet,
-          testCommand: n.testCommand,
-          testOutput: n.testOutput,
-          testCode: n.testCode,
-        })),
+        notesUsed: buildNotesUsedForRuleUsage(ruleUsage),
       }));
       setBatchRefineResults(pending);
-
-      await sleep(MOCK_BATCH_REFINE_DELAY_MS);
+      setBatchRefineIndex(0);
 
       const next: BatchRefineResult[] = [];
-      for (const target of eligible) {
+      for (let idx = 0; idx < eligible.length; idx += 1) {
+        const target = eligible[idx];
+        setBatchRefineIndex(idx);
         try {
-          const refinedResult = getMockBatchRefineResult(target);
-          if (!refinedResult) {
-            next.push({
-              ruleUsage: target,
-              refined: null,
-              status: 'skipped',
-              notesUsed: getRefineNotes(target).map((n) => ({
-                itemLabel: n.itemLabel,
-                verdict: n.verdict,
-                noteText: n.noteText,
-                verificationIndex: n.verificationIndex,
-                verificationTimestamp: n.verificationTimestamp,
-                explanation: n.explanation,
-                codeEvidence: n.codeEvidence,
-                testEvidence: n.testEvidence,
-                codeSnippet: n.codeSnippet,
-                testCommand: n.testCommand,
-                testOutput: n.testOutput,
-                testCode: n.testCode,
-              })),
-            });
-            setBatchRefineResults([...next]);
-            continue;
-          }
+          const refinedResult = await refineRuleUsage(target);
           next.push({
             ruleUsage: target,
             refined: refinedResult,
             status: 'ready',
-            notesUsed: getRefineNotes(target).map((n) => ({
-              itemLabel: n.itemLabel,
-              verdict: n.verdict,
-              noteText: n.noteText,
-              verificationIndex: n.verificationIndex,
-              verificationTimestamp: n.verificationTimestamp,
-              explanation: n.explanation,
-              codeEvidence: n.codeEvidence,
-              testEvidence: n.testEvidence,
-              codeSnippet: n.codeSnippet,
-              testCommand: n.testCommand,
-              testOutput: n.testOutput,
-              testCode: n.testCode,
-            })),
+            notesUsed: buildNotesUsedForRuleUsage(target),
           });
           setRefinedRuleStatusByKey((prev) => ({ ...prev, [target.rule.key]: 'refined' }));
         } catch (error: any) {
@@ -929,20 +777,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
             refined: null,
             status: 'error',
             error: error?.message || 'Refine failed',
-            notesUsed: getRefineNotes(target).map((n) => ({
-              itemLabel: n.itemLabel,
-              verdict: n.verdict,
-              noteText: n.noteText,
-              verificationIndex: n.verificationIndex,
-              verificationTimestamp: n.verificationTimestamp,
-              explanation: n.explanation,
-              codeEvidence: n.codeEvidence,
-              testEvidence: n.testEvidence,
-              codeSnippet: n.codeSnippet,
-              testCommand: n.testCommand,
-              testOutput: n.testOutput,
-              testCode: n.testCode,
-            })),
+            notesUsed: buildNotesUsedForRuleUsage(target),
           });
         }
         setBatchRefineResults([...next]);
@@ -960,22 +795,16 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
     setIsBatchApplying(true);
     try {
       const updatedKeys: string[] = [];
+      const newlyAddedIds: string[] = [];
       const next = [...batchRefineResults];
       for (let i = 0; i < next.length; i += 1) {
         const item = next[i];
-        if (item.status !== 'approved' || !item.refined || !item.ruleUsage.rule.kb_item_id) continue;
+        if (item.status !== 'approved' || !item.refined) continue;
         try {
-          await api.updateKBItem(item.ruleUsage.rule.kb_item_id, {
-            title: item.refined.title,
-            content: item.refined.content,
-            category: item.ruleUsage.rule.category,
-            context: item.refined.context,
-            evidence: item.refined.evidence,
-            confidence: item.refined.confidence,
-            decay: item.refined.decay,
-            confidence_reasoning: item.refined.confidence_reasoning,
-            decay_reasoning: item.refined.decay_reasoning,
-          });
+          const saveResult = await persistRuleToKnowledgeBase(item.ruleUsage, item.refined);
+          if (saveResult.created && saveResult.itemId) {
+            newlyAddedIds.push(saveResult.itemId);
+          }
           next[i] = { ...item, status: 'updated', error: undefined };
           updatedKeys.push(item.ruleUsage.rule.key);
         } catch (error: any) {
@@ -985,6 +814,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
       }
 
       if (updatedKeys.length) {
+        emitKnowledgeBaseRefresh(newlyAddedIds);
         setRefinedRuleStatusByKey((prev) => {
           const copy = { ...prev };
           updatedKeys.forEach((key) => {
@@ -1105,21 +935,21 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                             <Chip
                               label="★ Favorite"
                               size="small"
-                              sx={{ bgcolor: `${colors.gold}33`, color: '#8d6900', fontSize: '0.6rem', height: 16 }}
+                              sx={{ bgcolor: colors.surfaceWarningAlt, color: colors.warningTextStrong, fontSize: '0.6rem', height: 16 }}
                             />
                           )}
                           {rule.is_strict && (
                             <Chip
                               label="⚡ Strict"
                               size="small"
-                              sx={{ bgcolor: '#ffeceb', color: '#a72525', fontSize: '0.6rem', height: 16 }}
+                              sx={{ bgcolor: colors.surfaceDanger, color: colors.dangerText, fontSize: '0.6rem', height: 16 }}
                             />
                           )}
                           {rule.is_testable && (
                             <Chip
                               label="🧪 Testable"
                               size="small"
-                              sx={{ bgcolor: '#ecf3ff', color: '#1d4f95', fontSize: '0.6rem', height: 16 }}
+                              sx={{ bgcolor: colors.surfaceInfoAlt, color: colors.infoText, fontSize: '0.6rem', height: 16 }}
                             />
                           )}
                         </Box>
@@ -1146,15 +976,14 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                 <Typography sx={{ fontSize: '0.66rem', color: 'text.secondary' }}>
                   Batch refine rules with notes, then review diffs before applying.
                 </Typography>
-                <Button
-                  colorVariant="green"
-                  startIcon={<AutoFixHighIcon sx={{ fontSize: '0.8rem' }} />}
-                  sx={{ fontSize: '0.64rem', py: 0.2, px: 0.7, minHeight: 24 }}
+                <CompactIconButton
+                  label={isBatchRefining ? 'Evolving rules with notes' : 'Evolve rules with notes'}
+                  icon={<AutoFixHighIcon sx={{ fontSize: '0.8rem' }} />}
+                  tone="green"
                   onClick={startBatchRefine}
-                  disabled={isBatchRefining || isBatchApplying || usage.length === 0}
-                >
-                  {isBatchRefining ? 'Evolving...' : 'Evolve'}
-                </Button>
+                  disabled={isBatchApplying || usage.length === 0}
+                  loading={isBatchRefining}
+                />
               </Box>
 
               {usage.length === 0 ? (
@@ -1191,7 +1020,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                 <Chip
                                   label="No notes"
                                   size="small"
-                                  sx={{ bgcolor: '#f2f2f2', color: '#666', fontSize: '0.62rem', height: 17 }}
+                                  sx={{ bgcolor: colors.surfaceMuted, color: colors.secondaryText, fontSize: '0.62rem', height: 17 }}
                                 />
                               );
                             }
@@ -1199,15 +1028,15 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                               <Chip
                                 label={`Notes ${coverage.withNotes}/${coverage.total}`}
                                 size="small"
-                                sx={{ bgcolor: '#e8f5e9', color: '#1b5e20', fontSize: '0.62rem', height: 17 }}
+                                sx={{ bgcolor: colors.surfaceSuccess, color: colors.successText, fontSize: '0.62rem', height: 17 }}
                               />
                             );
                           })()}
                           {refinedRuleStatusByKey[ruleUsage.rule.key] && (
                             <Chip
-                              label={refinedRuleStatusByKey[ruleUsage.rule.key] === 'updated' ? 'Refined + Updated' : 'Refined'}
+                              label={refinedRuleStatusByKey[ruleUsage.rule.key] === 'updated' ? 'Refined + Saved' : 'Refined'}
                               size="small"
-                              sx={{ bgcolor: '#edf7ed', color: '#1b5e20', fontSize: '0.62rem', height: 17 }}
+                              sx={{ bgcolor: colors.surfaceSuccessAlt, color: colors.successText, fontSize: '0.62rem', height: 17 }}
                             />
                           )}
                         </Box>
@@ -1257,7 +1086,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
 
                     {ruleUsage.entries.length === 0 ? (
                       <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary', fontStyle: 'italic' }}>
-                        No verifications yet for this task.
+                        No proof records yet for this task.
                       </Typography>
                     ) : (
                       <Stack spacing={1}>
@@ -1276,7 +1105,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                 <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1, mb: 0.55 }}>
                                   <Box sx={{ minWidth: 0 }}>
                                     <Typography sx={{ fontSize: '0.64rem', color: 'text.secondary' }}>
-                                      Verification {currentIndex + 1} of {total}
+                                      Proof {currentIndex + 1} of {total}
                                     </Typography>
                                     <Typography
                                       sx={{ fontSize: '0.7rem', color: colors.darkGreen, fontWeight: 600, cursor: entry.itemId ? 'pointer' : 'default' }}
@@ -1340,9 +1169,14 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                     <Typography sx={{ fontSize: '0.64rem', color: 'text.secondary', mt: 0.1 }}>
                                       Pass/Fail Reason
                                     </Typography>
-                                            <Button
-                                              colorVariant="transparent"
-                                              sx={{ fontSize: '0.66rem', py: 0.2, ml: 'auto' }}
+                                    <CompactIconButton
+                                      label={savedText.trim() ? 'Edit note' : 'Add note'}
+                                      icon={
+                                        savedText.trim()
+                                          ? <EditOutlinedIcon sx={{ fontSize: '0.72rem' }} />
+                                          : <EditNoteOutlinedIcon sx={{ fontSize: '0.8rem' }} />
+                                      }
+                                      tone="dark-green"
                                       onClick={() => {
                                         setNoteEditorOpen((prev) => ({ ...prev, [effectiveKey]: true }));
                                         setNoteDrafts((prev) => ({
@@ -1350,14 +1184,8 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                           [effectiveKey]: prev[effectiveKey] ?? savedText ?? '',
                                         }));
                                       }}
-                                    >
-                                              {savedText.trim() ? (
-                                                <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25 }}>
-                                          <EditOutlinedIcon sx={{ fontSize: '0.72rem', color: colors.darkGreen }} />
-                                          Edit Note
-                                        </Box>
-                                      ) : '+ Add Note'}
-                                    </Button>
+                                      sx={{ ml: 'auto' }}
+                                    />
                                   </Box>
                                   <Box
                                     sx={{
@@ -1398,7 +1226,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                               placeholder="Review note for this verification..."
                                               value={draft}
                                               onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [effectiveKey]: e.target.value }))}
-                                              inputProps={{ 'aria-label': 'Verification Note' }}
+                                              inputProps={{ 'aria-label': 'Proof Note' }}
                                               sx={{
                                                 '& .MuiInputBase-root': { py: 0 },
                                                 '& .MuiInputBase-input': { fontSize: '0.64rem' },
@@ -1476,7 +1304,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                         {entry.codeBlocks.length > 0 ? (
                                           <Stack spacing={0.45}>
                                             {entry.codeBlocks.map((cb, cbIdx) => (
-                                              <Box key={cbIdx} sx={{ p: 0.5, bgcolor: '#f8f8f8', borderRadius: 1 }}>
+                                              <Box key={cbIdx} sx={{ p: 0.5, bgcolor: colors.surfaceMutedAlt, borderRadius: 1 }}>
                                                 <Typography sx={{ fontSize: '0.58rem', color: colors.darkGreen, mb: 0.2 }}>
                                                   {cb.file_path || 'Unknown file'}{cb.line_range ? ` (${cb.line_range})` : ''}
                                                 </Typography>
@@ -1498,7 +1326,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                           Test Evidence
                                         </Typography>
                                         {entry.testEvidence ? (
-                                          <Box sx={{ p: 0.5, bgcolor: '#f8f8f8', borderRadius: 1 }}>
+                                          <Box sx={{ p: 0.5, bgcolor: colors.surfaceMutedAlt, borderRadius: 1 }}>
                                             <Typography sx={{ fontSize: '0.58rem', mb: 0.2 }}>
                                               {entry.testEvidence.name || 'Unnamed test'} • {String(entry.testEvidence.result || 'unknown').toUpperCase()}
                                             </Typography>
@@ -1561,11 +1389,11 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
             {batchError && <Alert severity="error">{batchError}</Alert>}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
               <Chip size="small" label={`Total ${batchCounts.total}`} sx={{ fontSize: '0.62rem', height: 18 }} />
-              <Chip size="small" label={`Ready ${batchCounts.ready}`} sx={{ fontSize: '0.62rem', height: 18, bgcolor: '#eef8ee', color: '#1b5e20' }} />
-              <Chip size="small" label={`Approved ${batchCounts.approved}`} sx={{ fontSize: '0.62rem', height: 18, bgcolor: '#e8f5e9', color: '#1b5e20' }} />
-              <Chip size="small" label={`Updated ${batchCounts.updated}`} sx={{ fontSize: '0.62rem', height: 18, bgcolor: '#dff3df', color: '#1b5e20' }} />
+              <Chip size="small" label={`Ready ${batchCounts.ready}`} sx={{ fontSize: '0.62rem', height: 18, bgcolor: colors.surfaceSuccessSoft, color: colors.successText }} />
+              <Chip size="small" label={`Approved ${batchCounts.approved}`} sx={{ fontSize: '0.62rem', height: 18, bgcolor: colors.surfaceSuccess, color: colors.successText }} />
+              <Chip size="small" label={`Applied ${batchCounts.updated}`} sx={{ fontSize: '0.62rem', height: 18, bgcolor: colors.surfaceSuccessStrong, color: colors.successText }} />
               {batchCounts.error > 0 && (
-                <Chip size="small" label={`Errors ${batchCounts.error}`} sx={{ fontSize: '0.62rem', height: 18, bgcolor: '#ffeceb', color: '#a72525' }} />
+                <Chip size="small" label={`Errors ${batchCounts.error}`} sx={{ fontSize: '0.62rem', height: 18, bgcolor: colors.surfaceDanger, color: colors.dangerText }} />
               )}
             </Box>
 
@@ -1614,23 +1442,23 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                           </>
                         )}
                         <Chip
-                          label={current.status.toUpperCase()}
+                          label={current.status === 'updated' ? 'APPLIED' : current.status.toUpperCase()}
                           size="small"
                           sx={{
                             fontSize: '0.62rem',
                             height: 18,
                             bgcolor:
                               current.status === 'approved' || current.status === 'updated'
-                                ? '#e8f5e9'
+                                ? colors.surfaceSuccess
                                 : current.status === 'error'
-                                  ? '#ffeceb'
-                                  : '#f2f2f2',
+                                  ? colors.surfaceDanger
+                                  : colors.surfaceMuted,
                             color:
                               current.status === 'approved' || current.status === 'updated'
-                                ? '#1b5e20'
+                                ? colors.successText
                                 : current.status === 'error'
-                                  ? '#a72525'
-                                  : '#666',
+                                  ? colors.dangerText
+                                  : colors.secondaryText,
                           }}
                         />
                       </Box>
@@ -1639,8 +1467,8 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                     <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 0.8 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.4, flexWrap: 'wrap' }}>
                         <Chip label={rule.category || 'uncategorized'} size="small" sx={{ fontSize: '0.6rem', height: 17, bgcolor: `${colors.green}1f`, color: colors.darkGreen }} />
-                        {!rule.kb_item_id && (
-                          <Chip label="Not in Rules Mgmt" size="small" sx={{ fontSize: '0.6rem', height: 17, bgcolor: '#fff4e5', color: '#8a5400' }} />
+                        {!isPersistedRuleInKnowledgeBase(rule) && (
+                          <Chip label="Will be added to Rules Mgmt" size="small" sx={{ fontSize: '0.6rem', height: 17, bgcolor: colors.surfaceWarning, color: colors.warningText }} />
                         )}
                       </Box>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
@@ -1649,7 +1477,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                             <IconButton
                               size="small"
                               disableRipple
-                              disabled={!refinedRule || !rule.kb_item_id || isBatchApplying}
+                              disabled={!refinedRule || isBatchApplying}
                               onClick={() =>
                                 setBatchRefineResults((prev) =>
                                   prev.map((item, idx) =>
@@ -1737,7 +1565,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                       </Box>
                                     )}
                                   </Box>
-                                <Box sx={{ p: 0.45, bgcolor: '#f8f8f8', borderRadius: 1 }}>
+                                <Box sx={{ p: 0.45, bgcolor: colors.surfaceMutedAlt, borderRadius: 1 }}>
                                   <Typography sx={{ fontSize: '0.58rem', color: 'text.secondary' }}>
                                     {n.itemLabel} • {n.verdict.toUpperCase()}
                                     {n.verificationIndex !== null ? ` • v${n.verificationIndex + 1}` : ''}
@@ -1750,7 +1578,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                       Explanation: {n.explanation}
                                     </Typography>
                                   )}
-                                  <Box sx={{ mt: 0.35, p: 0.45, bgcolor: '#eef9f0', borderRadius: 0.7 }}>
+                                  <Box sx={{ mt: 0.35, p: 0.45, bgcolor: colors.surfaceSuccessTint, borderRadius: 0.7 }}>
                                     <Typography sx={{ fontSize: '0.58rem', color: colors.darkGreen, whiteSpace: 'pre-wrap' }}>
                                       Code: {n.codeEvidence || 'None'}
                                     </Typography>
@@ -1759,7 +1587,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                     </Typography>
                                   </Box>
                                   {(n.codeSnippet || n.testCommand || n.testOutput || n.testCode) && (
-                                    <Box sx={{ mt: 0.35, p: 0.45, bgcolor: '#f8f8f8', borderRadius: 0.7 }}>
+                                    <Box sx={{ mt: 0.35, p: 0.45, bgcolor: colors.surfaceMutedAlt, borderRadius: 0.7 }}>
                                       {n.codeSnippet && (
                                         <>
                                           <Typography sx={{ fontSize: '0.58rem', color: 'text.secondary', mb: 0.2 }}>
@@ -1846,13 +1674,13 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                 )}
                               </Box>
                               <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 0.5 }}>
-                                <Box sx={{ p: 0.45, bgcolor: '#f8f8f8', borderRadius: 1 }}>
+                                <Box sx={{ p: 0.45, bgcolor: colors.surfaceMutedAlt, borderRadius: 1 }}>
                                   <Typography sx={{ fontSize: '0.57rem', color: 'text.secondary', mb: 0.1 }}>Before</Typography>
                                   <Typography sx={{ fontSize: '0.61rem', whiteSpace: 'pre-wrap' }}>
                                     {field.before || 'None'}
                                   </Typography>
                                 </Box>
-                                <Box sx={{ p: 0.45, bgcolor: '#eef9f0', borderRadius: 1 }}>
+                                <Box sx={{ p: 0.45, bgcolor: colors.surfaceSuccessTint, borderRadius: 1 }}>
                                   <Typography sx={{ fontSize: '0.57rem', color: 'text.secondary', mb: 0.1 }}>After</Typography>
                                   {isEditing ? (
                                     <>
@@ -1945,14 +1773,14 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
               <CloseIcon sx={{ fontSize: '0.95rem' }} />
             </IconButton>
           </Tooltip>
-          <Button
-            colorVariant="green"
-            sx={{ fontSize: '0.66rem', py: 0.2, px: 0.75, minHeight: 24 }}
+          <CompactIconButton
+            label={isBatchApplying ? 'Applying approved batch changes' : `Apply approved batch changes (${batchCounts.approved})`}
+            icon={<CheckIcon sx={{ fontSize: '0.95rem' }} />}
+            tone="green"
             onClick={applyBatchApproved}
-            disabled={isBatchApplying || batchCounts.approved === 0}
-          >
-            {isBatchApplying ? 'Applying...' : `Apply Approved (${batchCounts.approved})`}
-          </Button>
+            disabled={batchCounts.approved === 0}
+            loading={isBatchApplying}
+          />
         </DialogActions>
       </Dialog>
 
@@ -1963,7 +1791,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
             <Stack spacing={1.25} sx={{ mt: 0.5 }}>
               {refineError && <Alert severity="error">{refineError}</Alert>}
               <Typography sx={{ fontSize: '0.66rem', color: 'text.secondary' }}>
-                This uses notes attached to task verifications, then saves the refined rule to Rules Management on update.
+                This uses notes attached to task proof records, then saves or updates the refined rule in Rules Management.
               </Typography>
               <Box sx={{ p: 0.8, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                 <Typography sx={{ fontSize: '0.66rem', fontWeight: 700, mb: 0.55 }}>
@@ -1976,14 +1804,26 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                   <Typography sx={{ fontSize: '0.62rem' }}>
                     <strong>Strict:</strong> {refineTarget.rule.is_strict ? 'Yes' : 'No'} • <strong>Testable:</strong> {refineTarget.rule.is_testable ? 'Yes' : 'No'}
                   </Typography>
-                  <Box sx={{ p: 0.55, bgcolor: '#f8f8f8', borderRadius: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                    <Chip
+                      label={isPersistedRuleInKnowledgeBase(refineTarget.rule) ? 'Already in Rules Mgmt' : 'Will be added on save'}
+                      size="small"
+                      sx={{
+                        bgcolor: isPersistedRuleInKnowledgeBase(refineTarget.rule) ? colors.surfaceSuccessSoft : colors.surfaceWarning,
+                        color: isPersistedRuleInKnowledgeBase(refineTarget.rule) ? colors.successText : colors.warningText,
+                        fontSize: '0.6rem',
+                        height: 18,
+                      }}
+                    />
+                  </Box>
+                  <Box sx={{ p: 0.55, bgcolor: colors.surfaceMutedAlt, borderRadius: 1 }}>
                     <Typography sx={{ fontSize: '0.58rem', color: 'text.secondary', mb: 0.15 }}>Content</Typography>
                     <Typography sx={{ fontSize: '0.62rem', whiteSpace: 'pre-wrap' }}>
                       {refineTarget.rule.content || 'None'}
                     </Typography>
                   </Box>
                   {refineTarget.rule.context ? (
-                    <Box sx={{ p: 0.55, bgcolor: '#f8f8f8', borderRadius: 1 }}>
+                    <Box sx={{ p: 0.55, bgcolor: colors.surfaceMutedAlt, borderRadius: 1 }}>
                       <Typography sx={{ fontSize: '0.58rem', color: 'text.secondary', mb: 0.15 }}>Context</Typography>
                       <Typography sx={{ fontSize: '0.62rem', whiteSpace: 'pre-wrap' }}>
                         {refineTarget.rule.context}
@@ -1991,7 +1831,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                     </Box>
                   ) : null}
                   {refineTarget.rule.evidence ? (
-                    <Box sx={{ p: 0.55, bgcolor: '#f8f8f8', borderRadius: 1 }}>
+                    <Box sx={{ p: 0.55, bgcolor: colors.surfaceMutedAlt, borderRadius: 1 }}>
                       <Typography sx={{ fontSize: '0.58rem', color: 'text.secondary', mb: 0.15 }}>Evidence</Typography>
                       <Typography sx={{ fontSize: '0.62rem', whiteSpace: 'pre-wrap' }}>
                         {refineTarget.rule.evidence}
@@ -2002,11 +1842,11 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
               </Box>
               <Box sx={{ p: 0.8, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                 <Typography sx={{ fontSize: '0.66rem', fontWeight: 700, mb: 0.55 }}>
-                  Verification Notes for Refine
+                  Proof Notes for Refine
                 </Typography>
                 {refineTarget.entries.length === 0 ? (
                   <Typography sx={{ fontSize: '0.61rem', color: 'text.secondary', fontStyle: 'italic' }}>
-                    No verifications found for this rule.
+                    No proof records found for this rule.
                   </Typography>
                 ) : (
                   (() => {
@@ -2042,7 +1882,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                             </Box>
                           )}
                         </Box>
-                        <Box sx={{ p: 0.55, bgcolor: '#f8f8f8', borderRadius: 1 }}>
+                        <Box sx={{ p: 0.55, bgcolor: colors.surfaceMutedAlt, borderRadius: 1 }}>
                           <Typography sx={{ fontSize: '0.6rem', color: 'text.secondary' }}>
                             {entry.itemLabel || 'Unknown item'} • {entry.verdict.toUpperCase()}
                           </Typography>
@@ -2051,7 +1891,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                           </Typography>
                         </Box>
                         <Accordion
-                          title={<Typography sx={{ fontSize: '0.61rem', fontWeight: 600 }}>View Original Verification</Typography>}
+                          title={<Typography sx={{ fontSize: '0.61rem', fontWeight: 600 }}>View Original Proof</Typography>}
                           defaultOpen={false}
                         >
                           <Box sx={{ p: 0.35 }}>
@@ -2065,7 +1905,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                 </Typography>
                                 <Stack spacing={0.35}>
                                   {entry.codeBlocks.map((cb, cbIdx) => (
-                                    <Box key={cbIdx} sx={{ p: 0.45, bgcolor: '#f8f8f8', borderRadius: 1 }}>
+                                    <Box key={cbIdx} sx={{ p: 0.45, bgcolor: colors.surfaceMutedAlt, borderRadius: 1 }}>
                                       <Typography sx={{ fontSize: '0.57rem', color: colors.darkGreen, mb: 0.15 }}>
                                         {cb.file_path || 'Unknown file'}{cb.line_range ? ` (${cb.line_range})` : ''}
                                       </Typography>
@@ -2082,7 +1922,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                 <Typography sx={{ fontSize: '0.58rem', color: 'text.secondary', mb: 0.2 }}>
                                   Test Evidence
                                 </Typography>
-                                <Box sx={{ p: 0.45, bgcolor: '#f8f8f8', borderRadius: 1 }}>
+                                <Box sx={{ p: 0.45, bgcolor: colors.surfaceMutedAlt, borderRadius: 1 }}>
                                   <Typography sx={{ fontSize: '0.57rem' }}>
                                     {entry.testEvidence.name || 'Unnamed test'} • {String(entry.testEvidence.result || 'unknown').toUpperCase()}
                                   </Typography>
@@ -2198,13 +2038,13 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                             )}
                           </Box>
                           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 0.5 }}>
-                            <Box sx={{ p: 0.45, bgcolor: '#f7f7f7', borderRadius: 1 }}>
+                            <Box sx={{ p: 0.45, bgcolor: colors.surfaceMutedSoft, borderRadius: 1 }}>
                               <Typography sx={{ fontSize: '0.56rem', color: 'text.secondary', mb: 0.12 }}>Before</Typography>
                               <Typography sx={{ fontSize: '0.6rem', whiteSpace: 'pre-wrap' }}>
                                 {field.before || 'None'}
                               </Typography>
                             </Box>
-                            <Box sx={{ p: 0.45, bgcolor: '#f7f7f7', borderRadius: 1 }}>
+                            <Box sx={{ p: 0.45, bgcolor: colors.surfaceMutedSoft, borderRadius: 1 }}>
                               <Typography sx={{ fontSize: '0.56rem', color: 'text.secondary', mb: 0.12 }}>After</Typography>
                               {isEditing ? (
                                 <>
@@ -2266,7 +2106,7 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
                                   </Box>
                                 </>
                               ) : (
-                                <Box sx={{ bgcolor: changed ? '#f6fbf6' : 'transparent', borderRadius: 0.7, p: 0.35 }}>
+                                <Box sx={{ bgcolor: changed ? colors.surfaceTint : 'transparent', borderRadius: 0.7, p: 0.35 }}>
                                   {changed ? (
                                     <InlineDiffText before={field.before || ''} after={field.after || ''} />
                                   ) : (
@@ -2328,13 +2168,13 @@ export function RuleReviewPanel({ chatId, plan, onItemSelect, onPlanUpdate, note
               </span>
             </Tooltip>
           ) : (
-            <Tooltip title={isUpdating ? 'Updating...' : 'Update Rule'}>
+            <Tooltip title={isUpdating ? 'Saving...' : refineTarget && isPersistedRuleInKnowledgeBase(refineTarget.rule) ? 'Update Rule' : 'Save to Rules Management'}>
               <span>
                 <IconButton
                   size="small"
                   disableRipple
                   onClick={updateRule}
-                  disabled={isUpdating || !refineTarget?.rule.kb_item_id}
+                  disabled={isUpdating}
                   sx={{
                     p: 0.35,
                     color: colors.green,

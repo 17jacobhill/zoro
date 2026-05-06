@@ -1,13 +1,14 @@
 import { useState } from 'react';
-import { Box, Typography, IconButton, Chip, Tooltip } from '@mui/material';
+import { Box, Typography, Chip, Tooltip } from '@mui/material';
 import StarIcon from '@mui/icons-material/Star';
 import StarBorderIcon from '@mui/icons-material/StarBorder';
 import DeleteIcon from '@mui/icons-material/Delete';
 import BoltIcon from '@mui/icons-material/Bolt';
 import ScienceIcon from '@mui/icons-material/Science';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import { ToggleOn, ToggleOff } from '@mui/icons-material';
 import { colors } from '../../design-system/colors';
-import { CollapsibleSection } from '../../design-system/CollapsibleSection';
+import { IconActionButton } from '../../design-system/IconActionButton';
 import type { KnowledgeItem } from '../../types/knowledge';
 
 interface RuleCardProps {
@@ -16,6 +17,7 @@ interface RuleCardProps {
   isNew?: boolean;
   onSelect: () => void;
   onFavoriteToggle: () => void;
+  onEdit?: () => void;
   onDelete: () => void;
   onStrictToggle?: () => void;
   onTestableToggle?: () => void;
@@ -27,6 +29,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
   isNew = false,
   onSelect,
   onFavoriteToggle,
+  onEdit,
   onDelete,
   onStrictToggle,
   onTestableToggle,
@@ -42,14 +45,14 @@ export const RuleCard: React.FC<RuleCardProps> = ({
       sx={{
         position: 'relative',
         borderLeft: isSelected ? `3px solid ${colors.green}` : '3px solid transparent',
-        borderBottom: '1px solid rgba(0, 0, 0, 0.08)',
+        borderBottom: `1px solid ${colors.divider}`,
         borderRadius: 0,
         padding: '10px 10px 10px 12px',
         marginBottom: 0,
         cursor: 'pointer',
-        backgroundColor: isSelected ? '#f6fbf3' : 'transparent',
+        backgroundColor: isSelected ? colors.surfaceTint : 'transparent',
         '&:hover': {
-          backgroundColor: isSelected ? '#f6fbf3' : '#fafcf9',
+          backgroundColor: isSelected ? colors.surfaceTint : colors.surfaceSubtle,
         },
       }}
       onClick={() => {
@@ -64,7 +67,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
             top: 6,
             right: 8,
             backgroundColor: colors.green,
-            color: 'white',
+            color: colors.white,
             padding: '2px 8px',
             borderRadius: '4px',
             fontSize: '10px',
@@ -87,7 +90,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
               size="small"
               sx={{
                 backgroundColor: colors.green,
-                color: 'white',
+                color: colors.white,
                 fontSize: '11px',
                 height: '20px',
               }}
@@ -97,19 +100,19 @@ export const RuleCard: React.FC<RuleCardProps> = ({
               size="small"
               sx={{
                 backgroundColor: colors.grey,
-                color: 'white',
+                color: colors.white,
                 fontSize: '11px',
                 height: '20px',
               }}
             />
             {item.confidence !== undefined && (
               <Chip
-                icon={<StarIcon sx={{ fontSize: '11px !important', color: '#fff !important' }} />}
+                icon={<StarIcon sx={{ fontSize: '11px !important', color: `${colors.white} !important` }} />}
                 label={`${(item.confidence * 100).toFixed(0)}%`}
                 size="small"
                 sx={{
-                  backgroundColor: item.confidence >= 0.8 ? colors.green : item.confidence >= 0.6 ? '#ff9800' : '#f44336',
-                  color: 'white',
+                  backgroundColor: item.confidence >= 0.8 ? colors.green : item.confidence >= 0.6 ? colors.confidenceMedium : colors.confidenceLow,
+                  color: colors.white,
                   fontSize: '11px',
                   height: '20px',
                 }}
@@ -117,12 +120,12 @@ export const RuleCard: React.FC<RuleCardProps> = ({
             )}
             {item.decay !== undefined && (
               <Chip
-                icon={<BoltIcon sx={{ fontSize: '11px !important', color: '#fff !important' }} />}
+                icon={<BoltIcon sx={{ fontSize: '11px !important', color: `${colors.white} !important` }} />}
                 label={`${(item.decay * 100).toFixed(0)}%`}
                 size="small"
                 sx={{
                   backgroundColor: item.decay > 0.6 ? colors.green : colors.grey,
-                  color: 'white',
+                  color: colors.white,
                   fontSize: '11px',
                   height: '20px',
                 }}
@@ -139,55 +142,58 @@ export const RuleCard: React.FC<RuleCardProps> = ({
         <Box sx={{ display: 'flex', gap: 0.5 }} onClick={(e) => e.stopPropagation()}>
           {item.type === 'rule' && onStrictToggle && (
             <Tooltip title={item.is_strict ? "Remove strict enforcement" : "Mark for strict enforcement"}>
-              <IconButton
-                size="small"
-                disableRipple
+              <IconActionButton
+                tone={item.is_strict ? 'green' : 'grey'}
+                active={item.is_strict}
                 onClick={(e) => {
                   e.stopPropagation();
                   onStrictToggle();
                 }}
-                sx={{
-                  color: item.is_strict ? colors.green : colors.grey,
-                  padding: '4px',
-                  '&:focus': { outline: 'none' },
-                }}
               >
                 {item.is_strict ? <ToggleOn fontSize="small" /> : <ToggleOff fontSize="small" />}
-              </IconButton>
+              </IconActionButton>
             </Tooltip>
           )}
           {item.type === 'rule' && onTestableToggle && (
             <Tooltip title={!item.is_strict ? "Mark as strict first to enable testing" : item.is_testable ? "Remove testable marking" : "Mark as testable (requires test evidence)"}>
               <span>
-                <IconButton
-                  size="small"
+                <IconActionButton
                   disableRipple
                   disabled={!item.is_strict}
+                  tone={item.is_testable ? 'blue' : 'grey'}
+                  active={item.is_testable}
                   onClick={(e) => {
                     e.stopPropagation();
                     onTestableToggle();
                   }}
                   sx={{
-                    color: item.is_testable ? colors.blue : colors.grey,
-                    padding: '4px',
                     opacity: !item.is_strict ? 0.3 : 1,
-                    '&:focus': { outline: 'none' },
                   }}
                 >
                   <ScienceIcon fontSize="small" />
-                </IconButton>
+                </IconActionButton>
               </span>
             </Tooltip>
           )}
-          <IconButton
-            size="small"
+          {onEdit && (
+            <Tooltip title="Edit rule">
+              <IconActionButton
+                tone="grey"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit();
+                }}
+              >
+                <EditOutlinedIcon sx={{ fontSize: '17px', color: colors.grey }} />
+              </IconActionButton>
+            </Tooltip>
+          )}
+          <IconActionButton
+            tone={item.is_favorite ? 'gold' : 'grey'}
+            active={item.is_favorite}
             onClick={(e) => {
               e.stopPropagation();
               onFavoriteToggle();
-            }}
-            sx={{
-              padding: '4px',
-              '&:focus': { outline: 'none' },
             }}
           >
             {item.is_favorite ? (
@@ -195,25 +201,21 @@ export const RuleCard: React.FC<RuleCardProps> = ({
             ) : (
               <StarBorderIcon sx={{ fontSize: '18px', color: colors.grey }} />
             )}
-          </IconButton>
-          <IconButton
-            size="small"
+          </IconActionButton>
+          <IconActionButton
+            tone="red"
             onClick={(e) => {
               e.stopPropagation();
               onDelete();
             }}
-            sx={{
-              padding: '4px',
-              '&:focus': { outline: 'none' },
-            }}
           >
             <DeleteIcon sx={{ fontSize: '18px', color: colors.red }} />
-          </IconButton>
+          </IconActionButton>
         </Box>
       </Box>
 
       {!expanded ? (
-        <Typography sx={{ fontSize: '0.78rem', color: '#555', mt: 0.75, lineHeight: 1.35 }}>
+        <Typography sx={{ fontSize: '0.78rem', color: colors.subtleText, mt: 0.75, lineHeight: 1.35 }}>
           {preview}
         </Typography>
       ) : (
@@ -247,7 +249,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
                 sx={{
                   fontSize: '12px',
                   fontFamily: 'monospace',
-                  backgroundColor: '#f5f5f5',
+                  backgroundColor: colors.surfaceMuted,
                   padding: '8px',
                   borderRadius: '4px',
                   whiteSpace: 'pre-wrap',
@@ -280,7 +282,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
             </Box>
           )}
 
-          <Box sx={{ mt: 1.25, pt: 1.25, borderTop: '1px solid rgba(0,0,0,0.08)' }}>
+          <Box sx={{ mt: 1.25, pt: 1.25, borderTop: `1px solid ${colors.divider}` }}>
             <Typography sx={{ fontSize: '11px', color: colors.grey }}>
               Source: {item.source_file}
             </Typography>

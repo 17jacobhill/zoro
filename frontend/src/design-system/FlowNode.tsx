@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Handle, Position } from 'reactflow';
-import { Paper, Typography, IconButton, Box } from '@mui/material';
-import { Delete } from '@mui/icons-material';
-import { Button } from './Button';
+import { Paper, Typography, IconButton, Box, alpha } from '@mui/material';
+import { Check, Close, Delete } from '@mui/icons-material';
+
+import { CompactIconButton } from './CompactIconButton';
 import { colors } from './colors';
 
 interface FlowNodeData {
@@ -34,9 +35,9 @@ export function FlowNode({ data, selected }: { data: FlowNodeData; selected?: bo
       switch (status) {
         case 'completed':
           baseStyle = {
-            background: 'repeating-linear-gradient(45deg, #e0e0e0, #e0e0e0 10px, #f0f0f0 10px, #f0f0f0 20px)',
+            background: `repeating-linear-gradient(45deg, ${colors.dividerMuted}, ${colors.dividerMuted} 10px, ${colors.surfaceMuted} 10px, ${colors.surfaceMuted} 20px)`,
             border: '1px solid',
-            borderColor: '#bdbdbd',
+            borderColor: colors.grey,
             opacity: 0.7,
           };
           break;
@@ -148,28 +149,30 @@ export function FlowNode({ data, selected }: { data: FlowNodeData; selected?: bo
             alignItems: 'center',
             justifyContent: 'center',
             gap: 0.5,
-            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+            backgroundColor: alpha(colors.white, 0.95),
             zIndex: 1,
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          <Button
-            colorVariant="red"
-            size="small"
-            onClick={handleDelete}
-          >
-            Confirm
-          </Button>
-          <Button
-            colorVariant="blue"
-            size="small"
-            onClick={(e) => {
-              e.stopPropagation();
-              setConfirmingDelete(false);
-            }}
-          >
-            Cancel
-          </Button>
+          <Box sx={{ display: 'flex', gap: 0.5 }}>
+            <CompactIconButton
+              label="Confirm delete"
+              icon={<Check fontSize="small" />}
+              size="small"
+              tone="red"
+              onClick={handleDelete}
+            />
+            <CompactIconButton
+              label="Cancel delete"
+              icon={<Close fontSize="small" />}
+              size="small"
+              tone="grey"
+              onClick={(e) => {
+                e.stopPropagation();
+                setConfirmingDelete(false);
+              }}
+            />
+          </Box>
         </Box>
       )}
       

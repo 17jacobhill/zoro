@@ -4,8 +4,14 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional
 
-from backend.utils import get_project_root, strip_markdown_json, get_enforcement_mode
+from backend.utils import (
+    get_project_root,
+    strip_markdown_json,
+    get_enforcement_mode,
+    get_llm_model_for_feature,
+)
 from backend.globals.models import get_default_provider
+from backend.visualization.paths import get_existing_plan_path, get_existing_session_metadata_path
 from backend.visualization.prompts.supervisor import SUPERVISOR_PROMPT, SUPERVISOR_PROMPT_SIMPLE, SUPERVISOR_PROMPT_SELECTIVE
 
 logger = logging.getLogger(__name__)
@@ -47,7 +53,7 @@ class SupervisorAgent:
         try:
             response = self.provider.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
-                model="gpt-5"
+                model=get_llm_model_for_feature("supervisor")
             )
             
             result = self._parse_response(response)
@@ -60,7 +66,7 @@ class SupervisorAgent:
     
     
     def _load_plan(self, chat_id: str) -> Optional[Dict]:
-        plan_path = get_project_root() / ".zoro" / "generated" / "visualization" / chat_id / "plan.json"
+        plan_path = get_existing_plan_path(chat_id, get_project_root())
         
         if not plan_path.exists():
             return None
@@ -69,7 +75,7 @@ class SupervisorAgent:
             return json.load(f)
     
     def _load_tracking(self, chat_id: str) -> Dict:
-        metadata_path = get_project_root() / ".zoro" / "generated" / "visualization" / chat_id / "metadata.json"
+        metadata_path = get_existing_session_metadata_path(chat_id, get_project_root())
         
         if not metadata_path.exists():
             return {}

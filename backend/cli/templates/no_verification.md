@@ -2,7 +2,7 @@
 
 ## Item ID Format
 **IMPORTANT:** All commands use the format `step-X` or `step-X-Y` (e.g., `step-1`, `step-2-3`).  
-Check `.rules/zoro_plan.md` for the exact item IDs in your plan.
+Check `.zoro/CURRENT_PLAN.md` for the exact item IDs in your plan.
 
 **Wrong formats that will fail:**
 - `1` ❌
@@ -25,10 +25,10 @@ When working on ANY item:
 
 ```bash
 # BEFORE starting work:
-zoro viz-update <item-id> in_progress
+zoro update-step <item-id> in_progress
 
 # AFTER completing work:
-zoro viz-update <item-id> completed
+zoro update-step <item-id> completed
 ```
 
 That's it! No verification steps required.
@@ -37,11 +37,11 @@ That's it! No verification steps required.
 
 ## Step-by-Step Workflow
 
-### Phase Work:
-1. Read `.rules/zoro_plan.md` to understand the phase scope
-2. Mark phase as `in_progress`
-3. Work through all steps in the phase
-4. Mark phase as `completed`
+### Parent Step Work:
+1. Read `.zoro/CURRENT_PLAN.md` to understand the parent step scope
+2. Mark the parent step as `in_progress`
+3. Work through all child steps under that parent
+4. Mark the parent step as `completed`
 
 ### Step Work:
 1. Mark step as `in_progress`
@@ -52,29 +52,29 @@ That's it! No verification steps required.
 ### Example Complete Workflow:
 
 ```bash
-# Starting Phase 4
-zoro viz-update phase-4 in_progress
+# Starting top-level step 4
+zoro update-step step-4 in_progress
 
 # Step 4.1 (has substeps)
-zoro viz-update step-4-1 in_progress
+zoro update-step step-4-1 in_progress
 
 # Substep 4.1.1
-zoro viz-update step-4-1-1 in_progress
+zoro update-step step-4-1-1 in_progress
 # ... do the work (implement feature) ...
-zoro viz-update step-4-1-1 completed
+zoro update-step step-4-1-1 completed
 
 # Substep 4.1.2
-zoro viz-update step-4-1-2 in_progress  
+zoro update-step step-4-1-2 in_progress  
 # ... do the work (implement feature) ...
-zoro viz-update step-4-1-2 completed
+zoro update-step step-4-1-2 completed
 
 # ... continue for all substeps ...
 
 # Complete parent step after all substeps done
-zoro viz-update step-4-1 completed
+zoro update-step step-4-1 completed
 
-# Complete phase after all steps done
-zoro viz-update phase-4 completed
+# Complete top-level step after all child steps are done
+zoro update-step step-4 completed
 ```
 
 ---
@@ -82,11 +82,11 @@ zoro viz-update phase-4 completed
 ## Critical Rules
 
 ### 1. THE PLAN IS CANONICAL
-- `.rules/zoro_plan.md` is the **source of truth**
+- `.zoro/CURRENT_PLAN.md` is the **source of truth**
 - Always read the plan at the start of each task
 - Check which step you're on and what's required
 - Grab all the rules needed to execute this step (including inherited rules) and make sure to generate code following these rules
-- Understand parent/child relationships (phases → steps → substeps)
+- Understand parent/child relationships (top-level steps → child steps → substeps)
 
 ### 2. NEVER SKIP SUBSTEPS
 If a step has substeps, you MUST complete ALL substeps before marking the parent step complete:

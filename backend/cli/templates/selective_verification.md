@@ -10,14 +10,14 @@ conda activate zoro
 ```
 
 2. Execute Zoro writes sequentially only:
-- No parallel/background `zoro viz-*` write commands.
+- No parallel/background Zoro write commands.
 - Run one command, wait for completion, then run next.
 
 3. Required order per item:
-- `zoro viz-update <item-id> in_progress`
+- `zoro update-step <item-id> in_progress`
 - implement code
 - `zoro prove-rule ...` for each strict (⚡) rule
-- `zoro viz-update <item-id> completed`
+- `zoro update-step <item-id> completed`
 
 4. Hard stop rules:
 - Never mark `completed` before required verify commands.
@@ -45,7 +45,7 @@ Rules:
 
 ```bash
 # 1. Mark step in progress
-zoro viz-update step-1-1 in_progress
+zoro update-step step-1-1 in_progress
 
 # 2. Do the work
 # (create backend/services/user_service.py and backend/repositories/user_repository.py)
@@ -54,7 +54,7 @@ zoro viz-update step-1-1 in_progress
 zoro prove-rule step-1-1 --rule "[architecture] Use repository pattern" --explanation "Implemented repository pattern by creating UserRepository class at backend/repositories/user_repository.py with methods get(), create(), update(), delete() that encapsulate all database operations. UserService uses dependency injection to receive UserRepository instance and delegates all CRUD operations to the repository." --file "backend/repositories/user_repository.py" --snippet "class UserRepository: pass" --line-range "5-12" --file "backend/services/user_service.py" --snippet "class UserService: pass" --line-range "6-12" --test-name "test_repository_pattern" --test-command "pytest tests/temp/test_rule_step_1_1.py -k test_repository_pattern" --test-result pass --test-output "1 passed" --test-file "tests/temp/test_rule_step_1_1.py" --verdict pass
 
 # 4. Mark complete (NOW ALLOWED - strict rule proved)
-zoro viz-update step-1-1 completed
+zoro update-step step-1-1 completed
 ✅ Updated step-1-1 to completed
 ```
 
@@ -85,7 +85,7 @@ Parent Step has ⚡ Rule X
 └─ Step 1-2 inherits ⚡ Rule X (must verify)
 ```
 
-**Important**: Each child must verify inherited rules independently - verifications don't carry over between siblings.
+**Important**: Each child must prove inherited rules independently - proof records don't carry over between siblings.
 
 ---
 
@@ -95,7 +95,7 @@ Parent Step has ⚡ Rule X
 
 ```bash
 # 1. Mark in progress
-zoro viz-update step-1-1 in_progress
+zoro update-step step-1-1 in_progress
 
 # 2. Do the work
 
@@ -103,7 +103,7 @@ zoro viz-update step-1-1 in_progress
 zoro prove-rule step-1-1 --rule "..." --explanation "..." --file "..." --snippet "..."
 
 # 4. Mark complete (only after successful prove-rule commands above)
-zoro viz-update step-1-1 completed
+zoro update-step step-1-1 completed
 ```
 
 **Do not reorder these commands.** In particular, never call `completed` before running required verify commands.
@@ -112,22 +112,22 @@ zoro viz-update step-1-1 completed
 
 ```bash
 # Start parent step
-zoro viz-update step-4-1 in_progress
+zoro update-step step-4-1 in_progress
 
 # Substep 4.1.1
-zoro viz-update step-4-1-1 in_progress
+zoro update-step step-4-1-1 in_progress
 # ... implement feature ...
 zoro prove-rule step-4-1-1 --rule "text" --explanation "details" --file "file.py" --snippet "code"
-zoro viz-update step-4-1-1 completed
+zoro update-step step-4-1-1 completed
 
 # Substep 4.1.2
-zoro viz-update step-4-1-2 in_progress
+zoro update-step step-4-1-2 in_progress
 # ... implement feature ...
 zoro prove-rule step-4-1-2 --rule "text" --explanation "details" --file "file.py" --snippet "code"
-zoro viz-update step-4-1-2 completed
+zoro update-step step-4-1-2 completed
 
 # Complete parent step
-zoro viz-update step-4-1 completed
+zoro update-step step-4-1 completed
 ```
 
 ---
@@ -156,7 +156,7 @@ zoro viz-update step-4-1 completed
 ## What Happens If You Skip?
 
 ```bash
-$ zoro viz-update step-1-1 completed
+$ zoro update-step step-1-1 completed
 
 ❌ Cannot mark complete. Missing strict rules:
   - Rule not verified [STRICT]: [architecture] Use repository pattern
@@ -203,7 +203,7 @@ For testable rules, create a focused test that validates compliance:
 
 **Test file location:**
 ```
-.zoro/generated/visualization/{chat-id}/tests/step_{step_id}/test_rule_{sanitized_category}.py
+.zoro/visualization/{chat-id}/tests/step_{step_id}/test_rule_{sanitized_category}.py
 ```
 
 **Naming conventions:**
@@ -213,7 +213,7 @@ For testable rules, create a focused test that validates compliance:
 **Example for "[architecture] Use repository pattern":**
 
 ```python
-# .zoro/generated/visualization/abc123/tests/step_1_1/test_rule_architecture.py
+# .zoro/visualization/abc123/tests/step_1_1/test_rule_architecture.py
 import pytest
 from pathlib import Path
 
@@ -236,7 +236,7 @@ def test_repository_pattern():
 **Example for "[api-design] Parse nested API responses":**
 
 ```python
-# .zoro/generated/visualization/abc123/tests/step_2_3/test_rule_api_design.py
+# .zoro/visualization/abc123/tests/step_2_3/test_rule_api_design.py
 import pytest
 import json
 
@@ -261,7 +261,7 @@ def test_nested_response_parsing():
 ### Step 3: Run Test
 
 ```bash
-pytest .zoro/generated/visualization/{chat-id}/tests/step_X_Y/test_rule_{category}.py -v
+pytest .zoro/visualization/{chat-id}/tests/step_X_Y/test_rule_{category}.py -v
 ```
 
 Capture the output for inclusion in verification.
@@ -269,15 +269,7 @@ Capture the output for inclusion in verification.
 ### Step 4: Verify with Test Evidence
 
 ```bash
-zoro prove-rule step-X-Y \
-  --rule "[category] rule text" \
-  --explanation "Detailed explanation of implementation" \
-  --file "path/to/file.py" --snippet "relevant code" --line-range "10-25" \
-  --test-name "test_repository_pattern" \
-  --test-command "pytest .zoro/generated/visualization/{chat-id}/tests/step_X_Y/test_rule_architecture.py -v" \
-  --test-result pass \
-  --test-output "1 passed in 0.5s" \
-  --test-file ".zoro/generated/visualization/{chat-id}/tests/step_X_Y/test_rule_architecture.py"
+zoro prove-rule step-X-Y --rule "[category] rule text" --explanation "Detailed explanation of implementation" --file "path/to/file.py" --snippet "relevant code" --line-range "10-25" --test-name "test_repository_pattern" --test-command "pytest .zoro/visualization/{chat-id}/tests/step_X_Y/test_rule_architecture.py -v" --test-result pass --test-output "1 passed in 0.5s" --test-file ".zoro/visualization/{chat-id}/tests/step_X_Y/test_rule_architecture.py"
 ```
 
 **The test file will be automatically read and included in the verification for display in the UI.**
@@ -286,15 +278,15 @@ zoro prove-rule step-X-Y \
 
 ```bash
 # 1. Mark step in progress
-zoro viz-update step-1-1 in_progress
+zoro update-step step-1-1 in_progress
 
 # 2. Implement the feature (e.g., create repository and service files)
 # (create backend/repositories/user_repository.py)
 # (create backend/services/user_service.py)
 
 # 3. Generate test for strict rule
-mkdir -p .zoro/generated/visualization/abc123/tests/step_1_1
-cat > .zoro/generated/visualization/abc123/tests/step_1_1/test_rule_architecture.py << 'EOF'
+mkdir -p .zoro/visualization/abc123/tests/step_1_1
+cat > .zoro/visualization/abc123/tests/step_1_1/test_rule_architecture.py << 'EOF'
 import pytest
 from pathlib import Path
 
@@ -310,13 +302,13 @@ def test_repository_pattern():
 EOF
 
 # 4. Run test
-pytest .zoro/generated/visualization/abc123/tests/step_1_1/test_rule_architecture.py -v
+pytest .zoro/visualization/abc123/tests/step_1_1/test_rule_architecture.py -v
 
 # 5. Prove rule with test evidence
-zoro prove-rule step-1-1 --rule "[architecture] Use repository pattern" --explanation "Implemented repository pattern by creating UserRepository at backend/repositories/user_repository.py with get(), create(), update(), delete() methods. UserService at backend/services/user_service.py receives repository via dependency injection." --file "backend/repositories/user_repository.py" --snippet "class UserRepository: pass" --line-range "5-12" --file "backend/services/user_service.py" --snippet "class UserService: pass" --line-range "8-15" --test-name "test_repository_pattern" --test-command "pytest .zoro/generated/visualization/abc123/tests/step_1_1/test_rule_architecture.py -v" --test-result pass --test-output "1 passed in 0.52s" --test-file ".zoro/generated/visualization/abc123/tests/step_1_1/test_rule_architecture.py"
+zoro prove-rule step-1-1 --rule "[architecture] Use repository pattern" --explanation "Implemented repository pattern by creating UserRepository at backend/repositories/user_repository.py with get(), create(), update(), delete() methods. UserService at backend/services/user_service.py receives repository via dependency injection." --file "backend/repositories/user_repository.py" --snippet "class UserRepository: pass" --line-range "5-12" --file "backend/services/user_service.py" --snippet "class UserService: pass" --line-range "8-15" --test-name "test_repository_pattern" --test-command "pytest .zoro/visualization/abc123/tests/step_1_1/test_rule_architecture.py -v" --test-result pass --test-output "1 passed in 0.52s" --test-file ".zoro/visualization/abc123/tests/step_1_1/test_rule_architecture.py"
 
 # 6. Mark complete
-zoro viz-update step-1-1 completed
+zoro update-step step-1-1 completed
 ```
 
 ### Test Lifecycle
@@ -335,7 +327,7 @@ Tests are organized by step, so they're easy to locate and maintain.
 ## Critical Rules
 
 ### 1. THE PLAN IS CANONICAL
-- `.rules/zoro_plan.md` is the **source of truth**
+- `.zoro/CURRENT_PLAN.md` is the **source of truth**
 - Always read the plan at the start of each task
 - Check which step you're on and what strict rules apply
 - Review all rules (strict and optional) for guidance
@@ -344,7 +336,7 @@ Tests are organized by step, so they're easy to locate and maintain.
 If a step has substeps, you MUST complete ALL substeps before marking the parent complete.
 
 ### 3. STEP-SPECIFIC VERIFICATIONS
-Each step must verify its own strict rules - verifications don't carry over between sibling steps, even for inherited rules.
+Each step must prove its own strict rules - proof records don't carry over between sibling steps, even for inherited rules.
 
 ### 4. DESIGN SYSTEM COMPLIANCE
 Always use design-system colors from `frontend/src/design-system/colors.ts`:
@@ -379,7 +371,7 @@ colors.grey      // #9e9e9e
 ✓ Focus verification effort where it matters most
 ✓ Flexible - mark rules strict as needed
 ✓ Inherited strict rules ensure consistency
-✓ Step-specific verifications prevent cross-contamination
+✓ Step-specific proof records prevent cross-contamination
 
 ---
 

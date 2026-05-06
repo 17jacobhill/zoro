@@ -1,6 +1,8 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { CssBaseline, Box, Typography, Button } from '@mui/material';
-import { WorkflowEditor } from './components/WorkflowEditor';
+import { CssBaseline, Box, Typography } from '@mui/material';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import { ProductShell } from './components/ProductShell';
+import { CompactIconButton } from './design-system/CompactIconButton';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -45,12 +47,12 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
           <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
             {this.state.error?.message || 'An unexpected error occurred'}
           </Typography>
-          <Button
-            variant="contained"
+          <CompactIconButton
+            label="Reload page"
+            icon={<RefreshIcon sx={{ fontSize: 18 }} />}
+            tone="red"
             onClick={() => window.location.reload()}
-          >
-            Reload Page
-          </Button>
+          />
         </Box>
       );
     }
@@ -63,7 +65,7 @@ function App() {
   return (
     <ErrorBoundary>
       <CssBaseline />
-      <WorkflowEditor />
+      <ProductShell />
     </ErrorBoundary>
   );
 }

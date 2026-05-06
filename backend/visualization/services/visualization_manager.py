@@ -1,25 +1,38 @@
 import json
 import uuid
-from pathlib import Path
-from typing import Optional, Dict, List, Tuple
 from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+
 import tiktoken
 
-from backend.plan_paths import get_plan_markdown_path
-from backend.utils import get_project_root, get_rule_retrieval_source_from_config, get_chat_history_source_from_config
+from backend.utils import (
+    get_project_root,
+    get_rule_retrieval_source_from_config,
+    get_chat_history_source_from_config,
+    get_llm_models_snapshot,
+)
+from backend.visualization.paths import (
+    get_existing_visualization_index_path,
+    get_session_dir,
+    get_session_metadata_path,
+    get_visualization_index_path,
+    get_visualization_root,
+)
 from backend.visualization.services.rule_learning_agent import (
     find_latest_chat_history_path,
     read_new_chat_content,
     _parse_codex_jsonl_messages
 )
-from backend.learner.chat_parser import ChatParser
-from backend.visualization.services.plan_tracker import (
-    plan_to_markdown,
-    get_chat_id_from_plan_md
+from backend.visualization.chat_parser import ChatParser
+from backend.visualization.services.plan_persistence import (
+    load_plan_document,
+    refresh_plan_markdown,
+    save_plan_document,
 )
+from backend.visualization.services.runtime_store import load_runtime_document, save_runtime_document
 
-VIS_DIR = get_project_root() / ".zoro" / "generated" / "visualization"
-INDEX_FILE = VIS_DIR / "index.json"
+VIS_DIR = get_visualization_root()
+INDEX_FILE = get_visualization_index_path()
 
 TOKEN_THRESHOLD = 150000
 
@@ -27,28 +40,26 @@ def _ensure_vis_dir():
     VIS_DIR.mkdir(parents=True, exist_ok=True)
 
 def _load_index() -> Dict[str, str]:
-    if not INDEX_FILE.exists():
+    index_path = get_existing_visualization_index_path()
+    if not index_path.exists():
         return {"path_to_chat_id": {}}
-    with open(INDEX_FILE, 'r') as f:
+    with open(index_path, 'r') as f:
         return json.load(f)
 
 def _save_index(index: Dict[str, str]):
     _ensure_vis_dir()
-    with open(INDEX_FILE, 'w') as f:
+    with open(get_visualization_index_path(), 'w') as f:
         json.dump(index, f, indent=2)
 
-def _get_metadata_path(chat_id: str) -> Path:
-    return VIS_DIR / chat_id / "metadata.json"
-
 def _load_metadata(chat_id: str) -> Optional[Dict]:
-    path = _get_metadata_path(chat_id)
+    path = get_session_metadata_path(chat_id)
     if not path.exists():
         return None
     with open(path, 'r') as f:
         return json.load(f)
 
 def _save_metadata(chat_id: str, metadata: Dict):
-    path = _get_metadata_path(chat_id)
+    path = get_session_metadata_path(chat_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, 'w') as f:
         json.dump(metadata, f, indent=2)
@@ -60,20 +71,69 @@ def _count_tokens(text: str) -> int:
     except Exception:
         return len(text.split())
 
+
+def _merge_visualization_state(metadata: Dict, runtime: Dict) -> Dict:
+    merged = dict(metadata or {})
+    merged.update(runtime or {})
+    return merged
+
 def list_visualizations() -> List[Dict]:
     _ensure_vis_dir()
     visualizations = []
-    
+
+    if not VIS_DIR.exists():
+        return visualizations
+
     for chat_dir in VIS_DIR.iterdir():
-        if chat_dir.is_dir() and chat_dir.name != "index.json":
-            metadata = _load_metadata(chat_dir.name)
-            if metadata:
-                visualizations.append(metadata)
-    
+        if not chat_dir.is_dir():
+            continue
+        chat_id = chat_dir.name
+        metadata = _load_metadata(chat_id)
+        if metadata:
+            runtime = load_runtime_document(chat_id)
+            visualizations.append(_merge_visualization_state(metadata, runtime))
+
     return visualizations
 
 def get_visualization(chat_id: str) -> Optional[Dict]:
-    return _load_metadata(chat_id)
+    metadata = _load_metadata(chat_id)
+    if not metadata:
+        return None
+    runtime = load_runtime_document(chat_id)
+    return _merge_visualization_state(metadata, runtime)
+
+
+def recover_sessions_after_restart() -> int:
+    """Best-effort recovery for transient in-memory states after API restarts.
+
+    If the backend exits while a chat is marked `polling`, there is no active
+    poll loop anymore. On next boot, we downgrade that transient state to
+    `paused` so the UI does not appear stuck in a live-reading mode.
+    """
+    vis_dir = get_visualization_root()
+    vis_dir.mkdir(parents=True, exist_ok=True)
+    if not vis_dir.exists():
+        return 0
+
+    recovered = 0
+    now = datetime.now().isoformat()
+
+    for chat_dir in vis_dir.iterdir():
+        if not chat_dir.is_dir():
+            continue
+
+        chat_id = chat_dir.name
+        metadata = _load_metadata(chat_id)
+        if not metadata:
+            continue
+
+        if metadata.get("status") == "polling":
+            metadata["status"] = "paused"
+            metadata["updated_at"] = now
+            _save_metadata(chat_id, metadata)
+            recovered += 1
+
+    return recovered
 
 def create_visualization(rule_retrieval_source: str = None) -> Tuple[Optional[Dict], Optional[str]]:
     if rule_retrieval_source is None:
@@ -109,28 +169,21 @@ def create_visualization(rule_retrieval_source: str = None) -> Tuple[Optional[Di
         "chat_history_source": get_chat_history_source_from_config(),
         "status": "idle",
         "last_polled_at": None,
-        "token_count": 0,
-        "last_message_index": 0,
-        "accumulated_content": "",
-        "cleaned_accumulated_content": "",
-        "supervision_cleaned_accumulated_content": "",
-        "last_analyzed_token_index": 0,
-        "last_supervised_token_index": 0,
-        "total_clean_tokens": 0,
-        "total_supervision_clean_tokens": 0,
         "plan_tracking": {},
         "rule_retrieval_source": rule_retrieval_source,
+        "llm_model_snapshot": get_llm_models_snapshot(),
         "created_at": now,
         "updated_at": now
     }
     
     _save_metadata(chat_id, metadata)
+    save_runtime_document(chat_id, {})
     
     path_map[latest_path_str] = chat_id
     index["path_to_chat_id"] = path_map
     _save_index(index)
     
-    return metadata, None
+    return get_visualization(chat_id), None
 
 def delete_visualization(chat_id: str) -> Tuple[bool, Optional[str]]:
     metadata = _load_metadata(chat_id)
@@ -146,7 +199,7 @@ def delete_visualization(chat_id: str) -> Tuple[bool, Optional[str]]:
         index["path_to_chat_id"] = path_map
         _save_index(index)
     
-    chat_dir = VIS_DIR / chat_id
+    chat_dir = get_session_dir(chat_id)
     if chat_dir.exists():
         import shutil
         shutil.rmtree(chat_dir)
@@ -162,7 +215,7 @@ def update_visualization_name(chat_id: str, name: str) -> Tuple[Optional[Dict], 
     metadata["updated_at"] = datetime.now().isoformat()
     _save_metadata(chat_id, metadata)
     
-    return metadata, None
+    return get_visualization(chat_id), None
 
 def start_visualization(chat_id: str) -> Tuple[Optional[Dict], Optional[str]]:
     metadata = _load_metadata(chat_id)
@@ -173,7 +226,7 @@ def start_visualization(chat_id: str) -> Tuple[Optional[Dict], Optional[str]]:
     metadata["updated_at"] = datetime.now().isoformat()
     _save_metadata(chat_id, metadata)
     
-    return metadata, None
+    return get_visualization(chat_id), None
 
 def pause_visualization(chat_id: str) -> Tuple[Optional[Dict], Optional[str]]:
     metadata = _load_metadata(chat_id)
@@ -184,7 +237,7 @@ def pause_visualization(chat_id: str) -> Tuple[Optional[Dict], Optional[str]]:
     metadata["updated_at"] = datetime.now().isoformat()
     _save_metadata(chat_id, metadata)
     
-    return metadata, None
+    return get_visualization(chat_id), None
 
 def poll_visualization(chat_id: str) -> Tuple[Optional[str], str, Optional[str]]:
     metadata = _load_metadata(chat_id)
@@ -198,6 +251,7 @@ def poll_visualization(chat_id: str) -> Tuple[Optional[str], str, Optional[str]]
     if not chat_file_path:
         return None, metadata["status"], "No chat file path"
     
+    runtime = load_runtime_document(chat_id)
     last_polled_at = metadata.get("last_polled_at")
     
     content, modified_at = read_new_chat_content(chat_file_path, last_polled_at)
@@ -215,7 +269,7 @@ def poll_visualization(chat_id: str) -> Tuple[Optional[str], str, Optional[str]]
             else:
                 messages = data.get("messages", [])
         
-        last_message_index = metadata.get("last_message_index", 0)
+        last_message_index = runtime.get("last_message_index", 0)
         new_messages = messages[last_message_index:]
         
         if not new_messages:
@@ -254,38 +308,39 @@ def poll_visualization(chat_id: str) -> Tuple[Optional[str], str, Optional[str]]
         new_tokens = _count_tokens(new_content)
         new_clean_tokens = _count_tokens(new_clean_text)
         
-        accumulated = metadata.get("accumulated_content", "")
+        accumulated = runtime.get("accumulated_content", "")
         if accumulated:
             accumulated += "\n\n" + new_content
         else:
             accumulated = new_content
         
-        cleaned_accumulated = metadata.get("cleaned_accumulated_content", "")
+        cleaned_accumulated = runtime.get("cleaned_accumulated_content", "")
         if cleaned_accumulated:
             cleaned_accumulated += "\n\n" + new_clean_text
         else:
             cleaned_accumulated = new_clean_text
         
-        supervision_cleaned_accumulated = metadata.get("supervision_cleaned_accumulated_content", "")
+        supervision_cleaned_accumulated = runtime.get("supervision_cleaned_accumulated_content", "")
         if supervision_cleaned_accumulated:
             supervision_cleaned_accumulated += "\n\n" + new_supervision_clean_text
         else:
             supervision_cleaned_accumulated = new_supervision_clean_text
         
-        metadata["token_count"] += new_tokens
-        metadata["total_clean_tokens"] = _count_tokens(cleaned_accumulated)
-        metadata["total_supervision_clean_tokens"] = _count_tokens(supervision_cleaned_accumulated)
-        metadata["last_message_index"] = len(messages)
-        metadata["accumulated_content"] = accumulated
-        metadata["cleaned_accumulated_content"] = cleaned_accumulated
-        metadata["supervision_cleaned_accumulated_content"] = supervision_cleaned_accumulated
+        runtime["token_count"] = int(runtime.get("token_count", 0)) + new_tokens
+        runtime["total_clean_tokens"] = _count_tokens(cleaned_accumulated)
+        runtime["total_supervision_clean_tokens"] = _count_tokens(supervision_cleaned_accumulated)
+        runtime["last_message_index"] = len(messages)
+        runtime["accumulated_content"] = accumulated
+        runtime["cleaned_accumulated_content"] = cleaned_accumulated
+        runtime["supervision_cleaned_accumulated_content"] = supervision_cleaned_accumulated
         metadata["last_polled_at"] = modified_at
         metadata["updated_at"] = datetime.now().isoformat()
         
-        if metadata["token_count"] >= TOKEN_THRESHOLD:
+        if runtime["token_count"] >= TOKEN_THRESHOLD:
             pass
         
         _save_metadata(chat_id, metadata)
+        save_runtime_document(chat_id, runtime)
         
         return new_content, metadata["status"], None
         
@@ -321,7 +376,8 @@ def _recalculate_inherited_rules(items: List[Dict], parent_rules: Optional[List[
         inherited_rules = []
         for rule, source in parent_rules:
             clean_rule = rule.copy()
-            inherited_rules.append({'rule': clean_rule, 'source': source})
+            inherited_entry = {'rule': clean_rule, 'source': source}
+            inherited_rules.append(inherited_entry)
         item['inherited_rules'] = inherited_rules
         
         if item.get('children'):
@@ -345,7 +401,7 @@ def update_item_status(chat_id: str, item_id: str, status: str) -> Tuple[Optiona
     if not metadata:
         return None, "Visualization not found"
     
-    if status not in ["pending", "in_progress", "completed"]:
+    if status not in ["pending", "in_progress", "completed", "blocked"]:
         return None, f"Invalid status: {status}"
     
     tracking = metadata.get("plan_tracking", {})
@@ -354,21 +410,11 @@ def update_item_status(chat_id: str, item_id: str, status: str) -> Tuple[Optiona
     metadata["updated_at"] = datetime.now().isoformat()
     
     _save_metadata(chat_id, metadata)
-    
-    plan_file = VIS_DIR / chat_id / "plan.json"
-    if plan_file.exists():
-        with open(plan_file, 'r') as f:
-            plan_data = json.load(f)
-        
-        chat_name = metadata.get("name", "Unnamed")
-        markdown = plan_to_markdown(chat_id, chat_name, plan_data, tracking)
-        
-        plan_md_path = get_plan_markdown_path(Path.cwd())
-        plan_md_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(plan_md_path, 'w', encoding='utf-8') as f:
-            f.write(markdown)
-    
-    return metadata, None
+
+    if load_plan_document(chat_id):
+        refresh_plan_markdown(chat_id)
+
+    return get_visualization(chat_id), None
 
 
 def _load_kb() -> Dict:
@@ -389,12 +435,9 @@ def add_rule_from_kb(chat_id: str, item_id: str, kb_item_id: str) -> Tuple[Optio
     if not kb_item:
         return None, f"KB item {kb_item_id} not found"
     
-    plan_file = VIS_DIR / chat_id / "plan.json"
-    if not plan_file.exists():
+    plan_data = load_plan_document(chat_id)
+    if not plan_data:
         return None, "Plan not found"
-    
-    with open(plan_file, 'r') as f:
-        plan_data = json.load(f)
     
     items = plan_data.get('plan', {}).get('items', [])
     target_item, _, _ = _find_item_in_tree(items, item_id)
@@ -420,20 +463,15 @@ def add_rule_from_kb(chat_id: str, item_id: str, kb_item_id: str) -> Tuple[Optio
     target_item['rules'].append(rule)
     
     _recalculate_inherited_rules(items)
-    
-    with open(plan_file, 'w') as f:
-        json.dump(plan_data, f, indent=2)
+    save_plan_document(chat_id, plan_data)
     
     return rule, None
 
 
 def toggle_rule_strict_enforcement(chat_id: str, item_id: str, rule_index: int, enabled: bool) -> Tuple[Optional[Dict], Optional[str]]:
-    plan_file = VIS_DIR / chat_id / "plan.json"
-    if not plan_file.exists():
+    plan_data = load_plan_document(chat_id)
+    if not plan_data:
         return None, "Plan not found"
-    
-    with open(plan_file, 'r') as f:
-        plan_data = json.load(f)
     
     items = plan_data.get('plan', {}).get('items', [])
     target_item, _, _ = _find_item_in_tree(items, item_id)
@@ -448,8 +486,6 @@ def toggle_rule_strict_enforcement(chat_id: str, item_id: str, rule_index: int, 
     rules[rule_index]['needs_strict_enforcement'] = enabled
     
     _recalculate_inherited_rules(items)
-    
-    with open(plan_file, 'w') as f:
-        json.dump(plan_data, f, indent=2)
+    save_plan_document(chat_id, plan_data)
     
     return rules[rule_index], None
