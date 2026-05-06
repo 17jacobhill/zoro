@@ -180,13 +180,3 @@ Structured results are stored under `.zoro/rules/structured` (including `knowled
 
 4. “No codex/cline chat history found”
 - Zoro is local-history driven. Make sure your local chat history source exists and `.zoro/config.json` has the intended `chat_history_source`.
-
-## GitHub + Hosting (Short)
-
-If `zoro` is already used on your GitHub account:
-1. Rename the existing repo (for example `zoro-archive`), then create a new public `zoro`.
-2. Or publish this under an org namespace (recommended): `your-org/zoro`.
-
-Hosting is possible, but local-first is the easiest path today. If hosting:
-- Backend needs persistent storage for `.zoro/` and `OPENAI_API_KEY` in secrets.
-- Frontend can be static-hosted and pointed to backend via `VITE_API_BASE`.
