@@ -63,11 +63,42 @@ def test_get_default_provider_ollama_defaults_to_localhost(monkeypatch):
     assert provider.api_key == "ollama"  # placeholder — Ollama doesn't check it
 
 
-def test_get_default_provider_qwen_and_zhipu_fail_loudly_not_silently_openai(monkeypatch):
-    for unimplemented in ("qwen", "zhipu"):
-        monkeypatch.setenv("LLM_PROVIDER", unimplemented)
-        with pytest.raises(ValueError, match=unimplemented):
-            get_default_provider()
+def test_get_default_provider_qwen_defaults_to_the_international_dashscope_endpoint(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "qwen")
+    monkeypatch.setenv("QWEN_API_KEY", "qwen-key")
+    monkeypatch.delenv("QWEN_REGION", raising=False)
+    provider = get_default_provider()
+    assert provider.api_key == "qwen-key"
+    assert "dashscope-intl.aliyuncs.com" in str(provider.client.base_url)
+
+
+def test_get_default_provider_qwen_cn_region_uses_the_mainland_endpoint(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "qwen")
+    monkeypatch.setenv("QWEN_API_KEY", "qwen-key")
+    monkeypatch.setenv("QWEN_REGION", "cn")
+    provider = get_default_provider()
+    assert "dashscope.aliyuncs.com" in str(provider.client.base_url)
+    assert "intl" not in str(provider.client.base_url)
+
+
+@pytest.mark.parametrize("alias", ["moonshot", "kimi"])
+def test_get_default_provider_moonshot_accepts_both_name_aliases(monkeypatch, alias):
+    monkeypatch.setenv("LLM_PROVIDER", alias)
+    monkeypatch.setenv("MOONSHOT_API_KEY", "moonshot-key")
+    monkeypatch.delenv("MOONSHOT_REGION", raising=False)
+    provider = get_default_provider()
+    assert provider.api_key == "moonshot-key"
+    assert "api.moonshot.ai" in str(provider.client.base_url)
+
+
+@pytest.mark.parametrize("alias", ["zhipu", "glm"])
+def test_get_default_provider_zhipu_accepts_both_name_aliases(monkeypatch, alias):
+    monkeypatch.setenv("LLM_PROVIDER", alias)
+    monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
+    monkeypatch.delenv("ZHIPU_REGION", raising=False)
+    provider = get_default_provider()
+    assert provider.api_key == "zhipu-key"
+    assert "api.z.ai" in str(provider.client.base_url)
 
 
 def test_get_default_provider_unknown_value_fails_loudly(monkeypatch):

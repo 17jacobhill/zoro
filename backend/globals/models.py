@@ -97,13 +97,17 @@ def get_default_provider() -> LLMProvider:
     """Previously ignored LLM_PROVIDER entirely and always returned
     OpenAIProvider() regardless of its value — .env.example documented
     ollama/qwen/zhipu as options, but none of them actually worked.
-    openai/cloudflare/ollama are real now (all OpenAI-compatible wire
-    format, just a different base_url/key). qwen/zhipu still have no
-    provider implementation (they use different native SDKs, already
-    present as dependencies but never wired to an LLMProvider subclass)
-    — selecting them now fails loudly instead of silently running
-    against OpenAI, which is strictly more correct even though it wasn't
-    the thing asked for."""
+
+    All of openai/cloudflare/ollama/qwen/moonshot (Kimi)/zhipu (GLM) turn
+    out to be the exact same wire format — every one of these vendors
+    exposes an OpenAI-compatible /v1/chat/completions endpoint, just at a
+    different base_url with a different key. qwen/zhipu were first wired
+    up assuming they needed their own native-SDK LLMProvider subclass
+    (dashscope/zhipuai, already dependencies) — verified against each
+    vendor's current docs that this was wrong, and both work through the
+    same OpenAIProvider(base_url=...) mechanism as cloudflare/ollama.
+    moonshot (Kimi) is the same story and is added alongside them.
+    """
     provider_type = os.getenv("LLM_PROVIDER", "openai").lower()
 
     if provider_type == "openai":
@@ -125,12 +129,34 @@ def get_default_provider() -> LLMProvider:
         api_key = os.getenv("OLLAMA_API_KEY") or "ollama"
         return OpenAIProvider(api_key=api_key, base_url=base_url)
 
-    if provider_type in ("qwen", "zhipu"):
-        raise ValueError(
-            f"LLM_PROVIDER={provider_type} is documented in .env.example but has no "
-            "provider implementation yet (it needs its own LLMProvider subclass using "
-            "the native dashscope/zhipuai SDK, not the OpenAI-compatible client). "
-            "Use openai, cloudflare, or ollama instead."
+    if provider_type == "qwen":
+        # DashScope (Alibaba Cloud)'s OpenAI-compatible mode. China vs
+        # international are DIFFERENT accounts/keys on different hosts —
+        # defaulting to "intl" since that's the common case outside
+        # mainland China; set QWEN_REGION=cn for the mainland endpoint.
+        region = os.getenv("QWEN_REGION", "intl").lower()
+        base_url = (
+            "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            if region == "cn"
+            else "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
         )
+        return OpenAIProvider(base_url=base_url, key_env_var="QWEN_API_KEY")
 
-    raise ValueError(f"Unknown LLM_PROVIDER: {provider_type!r}. Use openai, cloudflare, or ollama.")
+    if provider_type in ("moonshot", "kimi"):
+        region = os.getenv("MOONSHOT_REGION", "intl").lower()
+        base_url = "https://api.moonshot.cn/v1" if region == "cn" else "https://api.moonshot.ai/v1"
+        return OpenAIProvider(base_url=base_url, key_env_var="MOONSHOT_API_KEY")
+
+    if provider_type in ("zhipu", "glm"):
+        region = os.getenv("ZHIPU_REGION", "intl").lower()
+        base_url = (
+            "https://open.bigmodel.cn/api/paas/v4"
+            if region == "cn"
+            else "https://api.z.ai/api/paas/v4"
+        )
+        return OpenAIProvider(base_url=base_url, key_env_var="ZHIPU_API_KEY")
+
+    raise ValueError(
+        f"Unknown LLM_PROVIDER: {provider_type!r}. "
+        "Use openai, cloudflare, ollama, qwen, moonshot (or kimi), or zhipu (or glm)."
+    )
