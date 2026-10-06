@@ -1,7 +1,48 @@
-# OpenAI API Configuration
-OPENAI_API_KEY=your-api-key-here
+# LLM Provider Configuration
+
+# Default provider (options: openai, cloudflare, ollama, qwen, moonshot
+# (alias: kimi), zhipu (alias: glm) — all of these except ollama/openai
+# are OpenAI-compatible third-party endpoints, selected purely by
+# base_url/key; an unrecognized value raises a clear error rather than
+# silently running against OpenAI)
+LLM_PROVIDER=openai
+
+# OpenAI Configuration (for default provider)
+# OPENAI_API_KEY=your_openai_api_key_here
+
+# Cloudflare Workers AI (hosts open-weight models at the edge, including
+# Llama, Qwen3, GLM, and Kimi K2 — via Cloudflare's OpenAI-compatible
+# endpoint. Convenient if you want one of those model families without
+# a separate account at the vendor directly.)
+# LLM_PROVIDER=cloudflare
+# CLOUDFLARE_ACCOUNT_ID=your_cloudflare_account_id
+# CLOUDFLARE_API_TOKEN=your_cloudflare_api_token_with_workers_ai_permission
+# Then set default_model (and/or individual llm_models entries) in
+# .zoro/config.json to a Cloudflare model id, e.g. "@cf/moonshotai/kimi-k2.6"
+# or "@cf/meta/llama-3.2-3b-instruct" for a cheaper/smaller task
+
+# Ollama Configuration (local model)
+# LLM_PROVIDER=ollama
+# OLLAMA_BASE_URL=http://localhost:11434/v1
+# OLLAMA_API_KEY=your_ollama_api_key_if_needed
+
+# Qwen (Alibaba Cloud DashScope, OpenAI-compatible mode)
+# LLM_PROVIDER=qwen
+# QWEN_API_KEY=your_dashscope_api_key
+# QWEN_REGION=intl   # or "cn" for the mainland China endpoint
+
+# Moonshot AI / Kimi (OpenAI-compatible)
+# LLM_PROVIDER=moonshot   # or: kimi
+# MOONSHOT_API_KEY=your_moonshot_api_key
+# MOONSHOT_REGION=intl   # or "cn"
+
+# Zhipu AI / GLM (OpenAI-compatible, via the Z.ai international platform
+# or BigModel for mainland China)
+# LLM_PROVIDER=zhipu   # or: glm
+# ZHIPU_API_KEY=your_zhipu_api_key
+# ZHIPU_REGION=intl   # or "cn" for the BigModel endpoint
 
 # Instructions:
 # 1. Copy this file to .env
-# 2. Replace 'your-api-key-here' with your actual OpenAI API key
+# 2. Configure the LLM_PROVIDER and corresponding API keys
 # 3. Never commit .env to version control
