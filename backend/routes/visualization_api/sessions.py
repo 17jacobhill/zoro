@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
+from pathlib import Path
 
 import tiktoken
 from flask import jsonify, request
@@ -42,6 +44,43 @@ def get_config():
         return jsonify({"success": True, "config": config})
     except Exception as e:
         return handle_error("get_config", e)
+
+
+@visualization_bp.route("/api/project-root", methods=["GET"])
+def get_project_root_endpoint():
+    try:
+        logger.info("GET /api/project-root - Started")
+        return jsonify({"success": True, "path": str(get_project_root())})
+    except Exception as e:
+        return handle_error("get_project_root_endpoint", e)
+
+
+@visualization_bp.route("/api/project-root", methods=["POST"])
+def set_project_root():
+    """Switches which project ZORO operates on by changing this process's
+    cwd — get_project_root() (backend/utils.py) is just Path.cwd(), read
+    fresh on every call, so no restart is needed for this to take effect.
+    """
+    try:
+        logger.info("POST /api/project-root - Started")
+        data = request.json or {}
+        raw_path = str(data.get("path", "")).strip()
+        if not raw_path:
+            return jsonify({"success": False, "error": "path is required"}), 400
+
+        candidate = Path(raw_path).expanduser()
+        if not candidate.is_absolute():
+            return jsonify({"success": False, "error": "path must be absolute"}), 400
+        if not candidate.exists():
+            return jsonify({"success": False, "error": f"Directory does not exist: {candidate}"}), 404
+        if not candidate.is_dir():
+            return jsonify({"success": False, "error": f"Not a directory: {candidate}"}), 400
+
+        os.chdir(candidate)
+        logger.info(f"POST /api/project-root - Success (now {candidate})")
+        return jsonify({"success": True, "path": str(get_project_root())})
+    except Exception as e:
+        return handle_error("set_project_root", e)
 
 
 @visualization_bp.route("/api/chat-visualizations", methods=["GET"])

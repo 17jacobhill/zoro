@@ -210,6 +210,16 @@ export const api = {
     return response.data;
   },
 
+  getProjectRoot: async (): Promise<{ success: boolean; path?: string; error?: string }> => {
+    const response = await axios.get(`${API_BASE}/project-root`);
+    return response.data;
+  },
+
+  setProjectRoot: async (path: string): Promise<{ success: boolean; path?: string; error?: string }> => {
+    const response = await axios.post(`${API_BASE}/project-root`, { path });
+    return response.data;
+  },
+
   resolveConflict: async (
     chatId: string,
     itemId: string,
