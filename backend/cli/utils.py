@@ -116,11 +116,23 @@ def render_agents_protocol_block() -> str:
     ).strip()
 
 
-def ensure_agents_protocol_file(file_path="AGENTS.md"):
+def render_claude_protocol_block() -> str:
+    return "\n".join(
+        [
+            AGENTS_PROTOCOL_START,
+            "See @ZORO.md for the full Zoro workflow protocol.",
+            AGENTS_PROTOCOL_END,
+        ]
+    )
+
+
+def _ensure_marker_block_file(file_path, *, managed_block: str, fresh_content: str, legacy_template: str | None = None):
+    """Shared idempotent marker-block insertion, extracted from
+    ensure_agents_protocol_file's original body so ensure_claude_protocol_file
+    can reuse the exact same START/END-marker logic with a different
+    (much shorter) managed block and no legacy-template migration path —
+    there was never a legacy CLAUDE.md template to migrate away from."""
     path = Path(file_path)
-    managed_block = render_agents_protocol_block()
-    legacy_template = load_template("agents_codex.md").strip()
-    fresh_content = f"# AGENTS.md\n\n{managed_block}\n"
 
     if not path.exists():
         path.write_text(fresh_content, encoding="utf-8")
@@ -135,9 +147,9 @@ def ensure_agents_protocol_file(file_path="AGENTS.md"):
         _, _, after = remainder.partition(AGENTS_PROTOCOL_END)
         separator = "\n\n" if before.strip() and not before.endswith("\n\n") else ""
         updated = f"{before.rstrip()}{separator}{managed_block}{after}"
-    elif existing.strip() == legacy_template:
+    elif legacy_template and existing.strip() == legacy_template:
         updated = fresh_content
-    elif existing.lstrip().startswith(legacy_template):
+    elif legacy_template and existing.lstrip().startswith(legacy_template):
         suffix = existing.lstrip()[len(legacy_template):].lstrip("\n")
         updated = f"{managed_block}\n\n{suffix}" if suffix else f"{managed_block}\n"
     else:
@@ -150,6 +162,25 @@ def ensure_agents_protocol_file(file_path="AGENTS.md"):
 
     print(f"  ⊗ {file_path} already contains the Zoro protocol guidance")
     return False
+
+
+def ensure_agents_protocol_file(file_path="AGENTS.md"):
+    managed_block = render_agents_protocol_block()
+    legacy_template = load_template("agents_codex.md").strip()
+    fresh_content = f"# AGENTS.md\n\n{managed_block}\n"
+    return _ensure_marker_block_file(file_path, managed_block=managed_block, fresh_content=fresh_content, legacy_template=legacy_template)
+
+
+def ensure_claude_protocol_file(file_path="CLAUDE.md"):
+    """Preserves an existing CLAUDE.md's content and inserts one short,
+    idempotent managed block pointing to @ZORO.md — zoro init never
+    touched CLAUDE.md before this (confirmed by reading the pre-change
+    init.py and by direct testing in a disposable fixture). Unlike
+    AGENTS.md there is no legacy template to migrate from, so this is a
+    thin wrapper with no legacy_template argument."""
+    managed_block = render_claude_protocol_block()
+    fresh_content = f"# CLAUDE.md\n\n{managed_block}\n"
+    return _ensure_marker_block_file(file_path, managed_block=managed_block, fresh_content=fresh_content)
 
 def create_template_file(file_path, template_name, overwrite=False):
     path = Path(file_path)

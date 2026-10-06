@@ -4,6 +4,7 @@ from backend.cli.utils import (
     create_template_file,
     create_zoro_directories,
     ensure_agents_protocol_file,
+    ensure_claude_protocol_file,
     print_section,
     setup_gitignore,
 )
@@ -20,6 +21,7 @@ def cmd_init(args, save_config):
         print("\nCreating configuration files...")
         create_template_file("ZORO.md", "ZORO.md", overwrite=True)
         ensure_agents_protocol_file("AGENTS.md")
+        ensure_claude_protocol_file("CLAUDE.md")
         create_template_file(".env.example", "env_example.txt")
 
         setup_gitignore()
@@ -52,6 +54,7 @@ def cmd_init(args, save_config):
         print("3. Agent protocol files:")
         print("   - Read ZORO.md for the canonical workflow protocol")
         print("   - Existing AGENTS.md content is preserved and prefixed with the Zoro shim")
+        print("   - Existing CLAUDE.md content is preserved, with a short block added pointing to @ZORO.md")
         print()
         print("4. Start using the visualization workflow:")
         print("   - Extract a plan into .zoro/CURRENT_PLAN.md")

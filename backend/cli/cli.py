@@ -6,7 +6,7 @@ load_dotenv(find_dotenv(usecwd=True))
 import sys
 import argparse
 
-from backend.cli.commands import cmd_init, update_step, add_note, prove_rule
+from backend.cli.commands import cmd_init, update_step, add_note, prove_rule, verify_step, accept_risk
 from backend.utils import get_project_root
 
 # Config file path
@@ -82,6 +82,27 @@ def parse_args():
         help='Maximum snippet lines to persist per --snippet block (default: 12)',
     )
 
+    # Verify-step command — the only command that launches an external verifier.
+    verify_step_parser = subparsers.add_parser(
+        'verify-step',
+        help='Run an external verifier for a step and import its result as evidence'
+    )
+    verify_step_parser.add_argument('step_id', help='Step ID to verify')
+    verify_step_parser.add_argument('--verifier', required=True, help='Verifier id from .zoro/config.json\'s "verifiers" block')
+    verify_step_parser.add_argument('--chat-id', help='Chat ID (auto-detect if not provided)')
+    verify_step_parser.add_argument('--plan-id', help='Plan ID, if the active plan has a stable one')
+
+    # Accept-risk command — separate human-authorized decision record.
+    accept_risk_parser = subparsers.add_parser(
+        'accept-risk',
+        help='Record an authorized human acceptance of a PASS_WITH_RISK verifier result'
+    )
+    accept_risk_parser.add_argument('step_id', help='Step ID whose risk is being accepted')
+    accept_risk_parser.add_argument('--invocation-id', required=True, help='The verify-step invocation id being accepted')
+    accept_risk_parser.add_argument('--reason', required=True, help='Why this risk is being accepted')
+    accept_risk_parser.add_argument('--expires-at', help='Optional ISO timestamp after which this acceptance no longer applies')
+    accept_risk_parser.add_argument('--chat-id', help='Chat ID (auto-detect if not provided)')
+
     return parser.parse_args()
 
 def main():
@@ -116,6 +137,10 @@ def main():
             args.chat_id,
             args.snippet_max_lines,
         )
+    elif args.command == 'verify-step':
+        verify_step.callback(args.step_id, args.verifier, args.chat_id, args.plan_id)
+    elif args.command == 'accept-risk':
+        accept_risk.callback(args.step_id, args.invocation_id, args.reason, args.expires_at, args.chat_id)
     else:
         print("Please specify a valid command. Use --help for more information")
         sys.exit(1)

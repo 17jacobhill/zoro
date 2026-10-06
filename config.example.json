@@ -1,0 +1,28 @@
+{
+  "user_name": "Your Name",
+  "enforcement_mode": "selective-verification",
+  "rule_retrieval_source": "structured",
+  "rule_test_evidence_enabled": true,
+  "chat_history_source": "claude",
+  "verifiers": {
+    "security-audit": {
+      "kind": "command",
+      "argv": [
+        "node", "/absolute/path/to/sec-audit/dist/cli/index.js", "verify",
+        "--repo", "{repo_root}",
+        "--depth", "deep",
+        "--invocation-id", "{invocation_id}",
+        "--step-id", "{step_id}",
+        "{plan_id_args}",
+        "{rule_id_args}",
+        "--expected-head", "{git_head}",
+        "--result-file", "{result_file}"
+      ],
+      "schema": "zoro.security-audit.verifier-result/v1",
+      "timeout_seconds": 1800,
+      "pass_with_risk": "require_human",
+      "require_complete_coverage": true,
+      "gated_rule_categories": ["security"]
+    }
+  }
+}

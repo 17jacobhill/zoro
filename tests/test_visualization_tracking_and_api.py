@@ -331,6 +331,41 @@ def test_init_injects_zoro_protocol_into_existing_agents_idempotently(monkeypatc
     assert second_pass == first_pass
 
 
+def test_init_creates_claude_md_with_a_zoro_pointer_when_none_existed(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    init_module = importlib.import_module("backend.cli.commands.init")
+
+    init_module.cmd_init(SimpleNamespace(user_name="Jenny"), lambda config: None)
+
+    claude_md = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "<!-- ZORO-PROTOCOL:START -->" in claude_md
+    assert "@ZORO.md" in claude_md
+
+
+def test_init_preserves_existing_claude_md_content_and_injects_one_block_idempotently(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    init_module = importlib.import_module("backend.cli.commands.init")
+    cli_module = importlib.import_module("backend.cli.cli")
+
+    existing_claude = "# My project\n\nAlways run tests before committing.\n"
+    (tmp_path / "CLAUDE.md").write_text(existing_claude, encoding="utf-8")
+
+    init_module.cmd_init(SimpleNamespace(user_name="Jenny"), cli_module.save_config)
+    first_pass = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+
+    assert "<!-- ZORO-PROTOCOL:START -->" in first_pass
+    assert "<!-- ZORO-PROTOCOL:END -->" in first_pass
+    assert "Always run tests before committing." in first_pass
+    assert "@ZORO.md" in first_pass
+
+    init_module.cmd_init(SimpleNamespace(user_name="Jenny"), cli_module.save_config)
+    second_pass = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+
+    assert second_pass == first_pass
+    # Exactly one block, not re-prepended on every run.
+    assert second_pass.count("<!-- ZORO-PROTOCOL:START -->") == 1
+
+
 def test_kb_favorites_endpoints_cover_kb_and_manual_entries(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     _seed_knowledge_base(tmp_path)

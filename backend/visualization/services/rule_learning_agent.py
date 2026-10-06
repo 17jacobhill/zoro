@@ -45,6 +45,14 @@ def find_latest_chat_history_path() -> Optional[Path]:
     source = get_chat_history_source_from_config()
     if source == "codex":
         return _find_latest_codex_session_path()
+    if source == "claude":
+        # One-way import (claude_chat_source.py never imports this module)
+        # — keeps this existing, directly-called function (create_visualization()
+        # calls it with no arguments) correct for all three sources without
+        # introducing a cycle with chat_source_registry.py.
+        from backend.visualization.services.claude_chat_source import find_latest_claude_session_path
+
+        return find_latest_claude_session_path()
     return _find_latest_cline_history_path()
 
 def _parse_codex_jsonl_messages(raw_content: str) -> list[dict]:
@@ -75,6 +83,22 @@ def _parse_codex_jsonl_messages(raw_content: str) -> list[dict]:
         if blocks:
             messages.append({"role": role, "content": blocks})
     return messages
+
+def _parse_generic_json_messages(raw_content: str) -> list:
+    """The Cline-style fallback shape: either a bare list of messages, or
+    an object with a "messages" list. Extracted (not reworded) from the
+    inline branch that used to be duplicated verbatim at both of this
+    function's two call sites (visualization_manager.poll_visualization()
+    and routes/visualization_api/plans.py's _load_chat_messages()) before
+    the chat-source registry replaced the extension-sniffing dispatch
+    that used to pick between this and _parse_codex_jsonl_messages."""
+    data = json.loads(raw_content)
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("messages", [])
+    return []
+
 
 def read_new_chat_content(chat_file_path: str, last_polled_at: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     chat_file = Path(chat_file_path)

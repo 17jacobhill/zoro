@@ -116,17 +116,89 @@ zoro-api
 
 ## Supported Chat Sources
 
-- Currently supported: `codex`, `cline`
+- Currently supported: `codex`, `cline`, `claude`
 - Recommended default: `codex`
-- Claude chat-history source support: coming soon
+- The `claude` source reads the installed Claude Code client's own session
+  files (`~/.claude/projects/<project>/*.jsonl`) and excludes sub-agent
+  ("sidechain") turns from the transcript. If session discovery doesn't
+  find anything, use the manual plan-import flow instead of relying on it.
 
 You can set this in `.zoro/config.json`:
 
 ```json
 {
-  "chat_history_source": "codex"
+  "chat_history_source": "claude"
 }
 ```
+
+## External Security Verifier (`verify-step` / `accept-risk`)
+
+Zoro can gate a plan step behind an independently-executed external
+verifier — the first one is [`security-audit`](https://github.com/17jacobhill/sec-audit)'s
+`verify` command. Zoro launches it as a direct subprocess (never a
+shell string), validates and hashes everything it reports, and only then
+decides whether the step may complete. **Claude (or any coding agent)
+can never satisfy this gate itself** — only `zoro verify-step` ever
+launches the verifier, and only a named human can accept a
+`PASS_WITH_RISK` result via `zoro accept-risk`.
+
+Configure it in `.zoro/config.json`'s `verifiers` block (a full example, including `chat_history_source: "claude"`, is in [`config.example.json`](config.example.json)):
+
+```json
+{
+  "verifiers": {
+    "security-audit": {
+      "kind": "command",
+      "argv": [
+        "node", "/absolute/path/to/sec-audit/dist/cli/index.js", "verify",
+        "--repo", "{repo_root}",
+        "--depth", "deep",
+        "--invocation-id", "{invocation_id}",
+        "--step-id", "{step_id}",
+        "{plan_id_args}",
+        "{rule_id_args}",
+        "--expected-head", "{git_head}",
+        "--result-file", "{result_file}"
+      ],
+      "schema": "zoro.security-audit.verifier-result/v1",
+      "timeout_seconds": 1800,
+      "pass_with_risk": "require_human",
+      "require_complete_coverage": true,
+      "gated_rule_categories": ["security"]
+    }
+  }
+}
+```
+
+`{rule_id_args}` and `{plan_id_args}` are typed placeholders that expand
+to zero or more complete argv elements (repeated `--rule-id <id>` pairs,
+or nothing/`--plan-id <id>`) — never a joined or interpolated string.
+A plan rule is gated behind a verifier if its `category` is listed in
+that verifier's `gated_rule_categories`, or if the rule itself sets
+`requires_verifier` to that verifier's id.
+
+Usage:
+
+```bash
+zoro verify-step <step-id> --verifier security-audit
+# on PASS_WITH_RISK, a named human must explicitly accept it:
+zoro accept-risk <step-id> --invocation-id <id> --reason "<why this is acceptable>"
+```
+
+**Isolation warning**: `security-audit`'s Standard/Deep scan depths may
+execute project-controlled build scripts or browser-extension code
+against the repository being verified. Only point this at repositories
+you already trust, exactly as you would running `security-audit` (or
+any other build tooling) directly — this integration does not add
+sandboxing of its own.
+
+Evidence (the validated result envelope, a compact manifest, and
+hashed artifact references) is stored under
+`.zoro/visualization/<chat-id>/verifiers/<verifier-id>/<step-id>/<invocation-id>/`.
+Since this repo's `.gitignore` excludes `.zoro/`, that evidence is local
+to this machine by default — export it explicitly if you need
+cross-machine or durable audit history; this integration does not
+silently commit session state anywhere.
 
 ## Python Environment Notes
 

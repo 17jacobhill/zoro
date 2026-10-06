@@ -99,3 +99,13 @@ def get_monitoring_path(chat_id: str, base: Path | None = None) -> Path:
 
 def get_existing_monitoring_path(chat_id: str, base: Path | None = None) -> Path:
     return get_monitoring_path(chat_id, base)
+
+
+# External-verifier evidence — PRD §8.4 ZO-008:
+# .zoro/visualization/<chat_id>/verifiers/<verifier_id>/<step_id>/<invocation_id>/
+def get_verifier_dir(chat_id: str, verifier_id: str, step_id: str, invocation_id: str, base: Path | None = None) -> Path:
+    return get_session_dir(chat_id, base) / "verifiers" / verifier_id / step_id / invocation_id
+
+
+def get_verifier_manifest_path(chat_id: str, verifier_id: str, step_id: str, invocation_id: str, base: Path | None = None) -> Path:
+    return get_verifier_dir(chat_id, verifier_id, step_id, invocation_id, base) / "manifest.json"

@@ -57,7 +57,13 @@ class Rule(BaseModel):
     needs_strict_enforcement: bool = Field(default=False, description="Whether CLI must verify this rule")
     is_testable: bool = Field(default=False, description="Whether this rule requires automated test evidence")
     kb_item_id: Optional[str] = Field(default=None, description="KB item ID if from favorites")
-    
+    requires_verifier: Optional[str] = Field(
+        default=None,
+        description="External verifier id (backend/verifiers, e.g. 'security-audit') this rule is gated behind. "
+        "A rule is also treated as gated if its category is listed in that verifier's "
+        "gated_rule_categories in .zoro/config.json. Default None preserves every existing parse.",
+    )
+
     model_config = ConfigDict(extra="forbid")
 
 

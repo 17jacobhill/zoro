@@ -154,6 +154,95 @@ def save_evidence_document(chat_id: str, evidence_doc: dict, base: Path | None =
     return path
 
 
+def append_external_verifier_reference(
+    chat_id: str,
+    *,
+    item_id: str,
+    rule_ids: list[str],
+    verifier_id: str,
+    invocation_id: str,
+    manifest_path: str,
+    status: str | None,
+    coverage: str | None,
+    decision: str,
+    base: Path | None = None,
+) -> dict:
+    """Appends a COMPACT `source: "external-verifier"` reference into the
+    existing per-chat evidence.json, through the existing (unchanged)
+    load/save_evidence_document round-trip. The full manifest + imported
+    envelope/report already live under the immutable, atomically-written
+    `.zoro/visualization/<chat_id>/verifiers/...` directory
+    (external_verifier_store.py) — this is only a pointer to it, so
+    `update_step.py` can check "is there current accepted evidence" via
+    the same evidence_doc it already reads for rule-verification records.
+
+    Deliberately NOT deduped by content (unlike append_rule_verification_evidence,
+    which skips re-inserting an identical record): every invocation gets
+    its own record, so failed/superseded attempts stay in history
+    (handoff ZO-011) rather than being silently merged away.
+    """
+    now_iso = _now_iso()
+    evidence_doc = load_evidence_document(chat_id, base)
+    records = evidence_doc.setdefault("records", [])
+
+    record = normalize_evidence_record(
+        chat_id,
+        {
+            "item_id": item_id,
+            "rule_text": ", ".join(rule_ids),
+            "rule_source": "self",
+            "is_inherited": False,
+            "source": "external-verifier",
+            "explanation": f"{verifier_id} verification: {decision}",
+            "verdict": "pass" if decision in ("accept", "review_required") else "fail",
+            "timestamp": now_iso,
+            "record_index": len(records),
+            "raw_rule_result": {
+                "verifier_id": verifier_id,
+                "invocation_id": invocation_id,
+                "manifest_path": manifest_path,
+                "status": status,
+                "coverage": coverage,
+                "decision": decision,
+                "rule_ids": rule_ids,
+            },
+        },
+        now_iso,
+    )
+
+    records.append(record)
+    evidence_doc["chat_id"] = chat_id
+    evidence_doc["created_at"] = evidence_doc.get("created_at") or now_iso
+    evidence_doc["updated_at"] = now_iso
+    save_evidence_document(chat_id, evidence_doc, base)
+    return record
+
+
+def get_external_verifier_records_for_item(
+    evidence_doc: dict, item_id: str, verifier_id: str | None = None
+) -> list[dict]:
+    """Separate sibling of get_rule_verification_records_for_item — that
+    function hard-filters `source == "rule-verification"` and structurally
+    can never see an external-verifier record. Keeping this as its own
+    function (rather than a parameter on the existing one) means
+    "prove-rule evidence never satisfies a security gate" is enforced by
+    two distinct code paths, not a convention a future caller could
+    violate by passing the wrong `source` into a shared lookup."""
+    matches = []
+    for record in evidence_doc.get("records", []):
+        if not isinstance(record, dict):
+            continue
+        if record.get("source") != "external-verifier":
+            continue
+        if str(record.get("item_id") or "") != str(item_id):
+            continue
+        raw = record.get("raw_rule_result") or {}
+        if verifier_id and raw.get("verifier_id") != verifier_id:
+            continue
+        matches.append(record)
+    return matches
+
+
 def get_rule_verification_records_for_item(evidence_doc: dict, item_id: str, rule: dict) -> list[dict]:
     target_identity = _normalize_rule_identity(rule.get("kb_item_id"), rule.get("text"))
     matches = []

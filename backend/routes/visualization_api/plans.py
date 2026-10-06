@@ -21,7 +21,7 @@ from backend.visualization.services.plan_persistence import (
     normalize_plan_document,
     save_plan_document,
 )
-from backend.visualization.services.rule_learning_agent import _parse_codex_jsonl_messages
+from backend.visualization.services.chat_source_registry import parse_chat_messages
 from backend.visualization.services.visualization_manager import (
     _delete_item_recursive,
     _find_item_in_tree,
@@ -251,7 +251,7 @@ def _extract_text_from_message_content(content) -> str:
     return "\n".join(parts).strip()
 
 
-def _load_chat_messages(chat_file_path: str) -> list[dict]:
+def _load_chat_messages(chat_file_path: str, configured_source: str | None = None) -> list[dict]:
     if not chat_file_path:
         return []
 
@@ -265,16 +265,7 @@ def _load_chat_messages(chat_file_path: str) -> list[dict]:
         return []
 
     try:
-        if path.suffix.lower() == ".jsonl":
-            messages = _parse_codex_jsonl_messages(raw_content)
-        else:
-            payload = json.loads(raw_content)
-            if isinstance(payload, list):
-                messages = payload
-            elif isinstance(payload, dict):
-                messages = payload.get("messages", [])
-            else:
-                messages = []
+        messages = parse_chat_messages(raw_content, configured_source, file_path=chat_file_path)
     except (json.JSONDecodeError, ValueError):
         return []
 
@@ -368,7 +359,7 @@ def _load_content_from_chat_file(metadata: dict) -> str:
     if not chat_file_path:
         return ""
 
-    messages = _load_chat_messages(chat_file_path)
+    messages = _load_chat_messages(chat_file_path, (metadata or {}).get("chat_history_source"))
     return _messages_to_transcript(messages)
 
 

@@ -21,8 +21,8 @@ from backend.visualization.paths import (
 from backend.visualization.services.rule_learning_agent import (
     find_latest_chat_history_path,
     read_new_chat_content,
-    _parse_codex_jsonl_messages
 )
+from backend.visualization.services.chat_source_registry import parse_chat_messages
 from backend.visualization.chat_parser import ChatParser
 from backend.visualization.services.plan_persistence import (
     load_plan_document,
@@ -260,14 +260,11 @@ def poll_visualization(chat_id: str) -> Tuple[Optional[str], str, Optional[str]]
         return None, metadata["status"], None
     
     try:
-        if chat_file_path.endswith(".jsonl"):
-            messages = _parse_codex_jsonl_messages(content)
-        else:
-            data = json.loads(content)
-            if isinstance(data, list):
-                messages = data
-            else:
-                messages = data.get("messages", [])
+        # Dispatch by the SESSION'S OWN STORED source (captured at
+        # create_visualization() time), not live config — see
+        # chat_source_registry.py's module docstring for why.
+        configured_source = metadata.get("chat_history_source")
+        messages = parse_chat_messages(content, configured_source, file_path=chat_file_path)
         
         last_message_index = runtime.get("last_message_index", 0)
         new_messages = messages[last_message_index:]

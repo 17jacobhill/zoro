@@ -85,7 +85,7 @@ def get_rule_test_evidence_enabled() -> bool:
 def get_chat_history_source_from_config() -> str:
     config = _load_config()
     source = config.get("chat_history_source", "cline")
-    if source not in ["cline", "codex"]:
+    if source not in ["cline", "codex", "claude"]:
         logger = logging.getLogger(__name__)
         logger.warning(
             "Invalid chat_history_source '%s' in config, defaulting to 'cline'",
@@ -93,6 +93,50 @@ def get_chat_history_source_from_config() -> str:
         )
         return "cline"
     return source
+
+
+def get_verifiers_config():
+    """Strictly-validated `.zoro/config.json["verifiers"]` accessor.
+
+    Deliberately does NOT call `_load_config()` (which swallows every
+    read/parse error into `{}`) or otherwise degrade silently — this
+    config drives literal subprocess argv for a security gate
+    (backend/verifiers/security_audit.py's build_argv()), so a malformed
+    file, a non-object `verifiers` value, or an invalid verifier entry
+    must raise `VerifierConfigError` and block `verify-step` from running
+    at all, rather than silently behaving as "no verifiers configured".
+    A config.json that simply doesn't exist yet is a legitimate empty
+    state (not every project uses this feature), not an error.
+    """
+    import json as _json
+
+    from pydantic import ValidationError
+
+    from backend.verifiers.schemas import VerifierConfigError, VerifiersConfig
+
+    config_path = get_project_root() / ".zoro" / "config.json"
+    if not config_path.exists():
+        return VerifiersConfig()
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw = _json.load(f)
+    except (OSError, ValueError) as exc:
+        raise VerifierConfigError(f"Could not read .zoro/config.json: {exc}") from exc
+
+    if not isinstance(raw, dict):
+        raise VerifierConfigError(".zoro/config.json must be a JSON object")
+
+    raw_verifiers = raw.get("verifiers", {})
+    if not isinstance(raw_verifiers, dict):
+        raise VerifierConfigError(
+            f"'verifiers' in .zoro/config.json must be an object, got {type(raw_verifiers).__name__}"
+        )
+
+    try:
+        return VerifiersConfig(verifiers=raw_verifiers)
+    except ValidationError as exc:
+        raise VerifierConfigError(f"Invalid 'verifiers' config in .zoro/config.json: {exc}") from exc
 
 
 def get_default_model_from_config() -> str:

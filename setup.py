@@ -11,10 +11,18 @@ setup(
         "python-dotenv>=1.0.0",
         "openai>=1.0.0",
         "tiktoken>=0.5.0",
+        # Every CLI command module (backend/cli/commands/*.py, including
+        # the external-verifier commands) is click-decorated; this used
+        # to ride in only transitively via flask, which is fragile (a
+        # flask major version could drop it as a dependency).
+        "click>=8.0.0",
         # Additional dependencies for Chinese LLM providers
         "dashscope; platform_system!='Darwin' or python_implementation!='PyPy'",  # For Qwen
         "zhipuai; platform_system!='Darwin' or python_implementation!='PyPy'",   # For Zhipu
     ],
+    extras_require={
+        "dev": ["pytest>=7.0.0"],
+    },
     entry_points={
         'console_scripts': [
             'zoro=backend.cli.cli:cli',
