@@ -210,8 +210,13 @@ export const api = {
     return response.data;
   },
 
-  getProjectRoot: async (): Promise<{ success: boolean; path?: string; error?: string }> => {
+  getProjectRoot: async (): Promise<{ success: boolean; path?: string; initialized?: boolean; error?: string }> => {
     const response = await axios.get(`${API_BASE}/project-root`);
+    return response.data;
+  },
+
+  initProject: async (userName?: string): Promise<{ success: boolean; path?: string; error?: string }> => {
+    const response = await axios.post(`${API_BASE}/init-project`, userName ? { user_name: userName } : {});
     return response.data;
   },
 

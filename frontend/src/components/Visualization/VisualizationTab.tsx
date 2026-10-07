@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Box, Typography, List, ListItem, ListItemButton, alpha } from '@mui/material';
-import { Add, Chat, Delete } from '@mui/icons-material';
+import { Box, Button, Typography, List, ListItem, ListItemButton, alpha } from '@mui/material';
+import { Add, Chat, Delete, RocketLaunch } from '@mui/icons-material';
 import { Panel, PanelGroup } from 'react-resizable-panels';
 import { ChatVisualizationView } from '../ChatVisualizationView';
 import { IconActionButton } from '../../design-system/IconActionButton';
@@ -12,6 +12,14 @@ import { colors } from '../../design-system/colors';
 export function VisualizationTab() {
   const [visualizations, setVisualizations] = useState<ChatVisualization[]>([]);
   const [selectedVis, setSelectedVis] = useState<string | null>(null);
+  const [projectInitialized, setProjectInitialized] = useState<boolean | null>(null);
+  const [initializing, setInitializing] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
+
+  const refreshProjectStatus = async () => {
+    const res = await api.getProjectRoot();
+    setProjectInitialized(res.success ? res.initialized ?? null : null);
+  };
 
   useEffect(() => {
     const fetchVisualizations = async () => {
@@ -19,7 +27,25 @@ export function VisualizationTab() {
       setVisualizations(response);
     };
     fetchVisualizations();
+    refreshProjectStatus();
   }, []);
+
+  const handleInitProject = async () => {
+    setInitializing(true);
+    setInitError(null);
+    try {
+      const res = await api.initProject();
+      if (res.success) {
+        await refreshProjectStatus();
+      } else {
+        setInitError(res.error || 'Failed to initialize project');
+      }
+    } catch (err: any) {
+      setInitError(err?.response?.data?.error || err?.message || 'Failed to initialize project');
+    } finally {
+      setInitializing(false);
+    }
+  };
 
   const handleNewVisualization = async () => {
     const response = await api.createChatVisualization();
@@ -49,7 +75,12 @@ export function VisualizationTab() {
             <PanelHeader
               title="Sessions"
               actions={
-                <IconActionButton tone="green" aria-label="Create visualization" onClick={handleNewVisualization}>
+                <IconActionButton
+                  tone="green"
+                  aria-label="Create visualization"
+                  onClick={handleNewVisualization}
+                  disabled={projectInitialized === false}
+                >
                   <Add sx={{ fontSize: 18 }} />
                 </IconActionButton>
               }
@@ -106,6 +137,27 @@ export function VisualizationTab() {
           <Box sx={{ p: 2, height: '100%', minHeight: 0, overflow: 'auto' }}>
             {selectedVis ? (
               <ChatVisualizationView chatId={selectedVis} onUpdateName={handleUpdateVisualizationName} />
+            ) : projectInitialized === false ? (
+              <Box>
+                <Typography sx={{ mb: 1 }}>
+                  This project hasn't been set up with ZORO yet.
+                </Typography>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<RocketLaunch sx={{ fontSize: 16 }} />}
+                  onClick={handleInitProject}
+                  disabled={initializing}
+                  sx={{ color: colors.green, borderColor: colors.green, textTransform: 'none' }}
+                >
+                  {initializing ? 'Initializing…' : 'Initialize ZORO Here'}
+                </Button>
+                {initError && (
+                  <Typography variant="caption" sx={{ display: 'block', mt: 1, color: colors.red }}>
+                    {initError}
+                  </Typography>
+                )}
+              </Box>
             ) : (
               <Typography>Select a chat or create a new one</Typography>
             )}

@@ -50,9 +50,71 @@ def get_config():
 def get_project_root_endpoint():
     try:
         logger.info("GET /api/project-root - Started")
-        return jsonify({"success": True, "path": str(get_project_root())})
+        root = get_project_root()
+        initialized = (root / ".zoro" / "config.json").exists()
+        return jsonify({"success": True, "path": str(root), "initialized": initialized})
     except Exception as e:
         return handle_error("get_project_root_endpoint", e)
+
+
+@visualization_bp.route("/api/init-project", methods=["POST"])
+def init_project():
+    """Equivalent of `zoro init` for the current project root, adapted for
+    a web request: backend.cli.commands.init.cmd_init() calls sys.exit(1)
+    on failure, which would kill this whole process if called directly
+    from a request handler — so this reimplements its steps with proper
+    exception handling instead of importing/calling it.
+
+    Defaults chat_history_source to "claude" rather than cmd_init's own
+    "codex" default — a project initialized through this running web app
+    is overwhelmingly likely to be used from Claude Code, unlike the bare
+    `zoro init` CLI default which predates Claude support entirely. The
+    CLI's own default is intentionally left unchanged.
+    """
+    try:
+        logger.info("POST /api/init-project - Started")
+        data = request.json or {}
+        user_name = str(data.get("user_name") or os.environ.get("USER") or "Unknown").strip()
+
+        from backend.cli.utils import (
+            create_template_file,
+            create_zoro_directories,
+            ensure_agents_protocol_file,
+            ensure_claude_protocol_file,
+            setup_gitignore,
+        )
+        from backend.utils import DEFAULT_MODEL, DEFAULT_MODELS_BY_FEATURE
+
+        root = get_project_root()
+        config_path = root / ".zoro" / "config.json"
+        if config_path.exists():
+            return jsonify({"success": False, "error": "Already initialized (.zoro/config.json exists)"}), 400
+
+        create_zoro_directories()
+        create_template_file("ZORO.md", "ZORO.md", overwrite=True)
+        ensure_agents_protocol_file("AGENTS.md")
+        ensure_claude_protocol_file("CLAUDE.md")
+        create_template_file(".env.example", "env_example.txt")
+        setup_gitignore()
+
+        config = {
+            "user_name": user_name,
+            "enforcement_mode": "selective-verification",
+            "rule_retrieval_source": "structured",
+            "rule_test_evidence_enabled": True,
+            "chat_history_source": "claude",
+            "default_model": DEFAULT_MODEL,
+            "llm_models": dict(DEFAULT_MODELS_BY_FEATURE),
+            "processed_files": [],
+        }
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+
+        logger.info(f"POST /api/init-project - Success (root={root})")
+        return jsonify({"success": True, "path": str(root)})
+    except Exception as e:
+        return handle_error("init_project", e)
 
 
 @visualization_bp.route("/api/browse-directory", methods=["GET"])
