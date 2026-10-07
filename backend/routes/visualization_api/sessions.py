@@ -55,6 +55,48 @@ def get_project_root_endpoint():
         return handle_error("get_project_root_endpoint", e)
 
 
+@visualization_bp.route("/api/browse-directory", methods=["GET"])
+def browse_directory():
+    """Server-side directory listing for the project-picker UI. A browser
+    can't hand JavaScript a real absolute filesystem path (even the native
+    file picker only exposes relative names, for sandboxing reasons), so
+    the picker walks the tree through this endpoint instead — the server
+    already has real filesystem access, and the path it reports back for
+    the directory being browsed is exactly what POST /api/project-root needs.
+    """
+    try:
+        logger.info("GET /api/browse-directory - Started")
+        raw_path = request.args.get("path", "").strip()
+        candidate = Path(raw_path).expanduser() if raw_path else Path.home()
+        candidate = candidate.resolve()
+
+        if not candidate.exists():
+            return jsonify({"success": False, "error": f"Directory does not exist: {candidate}"}), 404
+        if not candidate.is_dir():
+            return jsonify({"success": False, "error": f"Not a directory: {candidate}"}), 400
+
+        directories = []
+        try:
+            for entry in candidate.iterdir():
+                try:
+                    if entry.is_dir():
+                        directories.append(entry.name)
+                except (PermissionError, OSError):
+                    continue
+        except PermissionError:
+            return jsonify({"success": False, "error": f"Permission denied: {candidate}"}), 403
+
+        directories.sort(key=str.lower)
+        parent = str(candidate.parent) if candidate.parent != candidate else None
+
+        logger.info(f"GET /api/browse-directory - Success ({len(directories)} subdirectories)")
+        return jsonify(
+            {"success": True, "path": str(candidate), "parent": parent, "directories": directories}
+        )
+    except Exception as e:
+        return handle_error("browse_directory", e)
+
+
 @visualization_bp.route("/api/project-root", methods=["POST"])
 def set_project_root():
     """Switches which project ZORO operates on by changing this process's

@@ -78,3 +78,85 @@ def test_set_project_root_expands_a_leading_tilde(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert response.get_json()["path"] == str(nested)
+
+
+def test_browse_directory_defaults_to_home_when_no_path_given(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "Documents").mkdir()
+    (tmp_path / "a-file.txt").write_text("x")
+    client = create_app().test_client()  # create_app() itself creates .zoro/ (logging setup) under cwd
+
+    response = client.get("/api/browse-directory")
+
+    body = response.get_json()
+    assert response.status_code == 200
+    assert body["success"] is True
+    assert body["path"] == str(tmp_path)
+    assert "Documents" in body["directories"]
+    assert "a-file.txt" not in body["directories"]  # files are excluded
+
+
+def test_browse_directory_lists_only_subdirectories_sorted_case_insensitively(tmp_path):
+    for name in ["zebra", "Apple", "banana"]:
+        (tmp_path / name).mkdir()
+    (tmp_path / "readme.md").write_text("x")
+    client = create_app().test_client()
+
+    response = client.get("/api/browse-directory", query_string={"path": str(tmp_path)})
+
+    body = response.get_json()
+    assert body["directories"] == ["Apple", "banana", "zebra"]
+
+
+def test_browse_directory_reports_the_parent_for_navigating_up(tmp_path):
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    client = create_app().test_client()
+
+    response = client.get("/api/browse-directory", query_string={"path": str(nested)})
+
+    body = response.get_json()
+    assert body["parent"] == str(tmp_path)
+
+
+def test_browse_directory_root_has_no_parent():
+    client = create_app().test_client()
+
+    response = client.get("/api/browse-directory", query_string={"path": "/"})
+
+    body = response.get_json()
+    assert body["success"] is True
+    assert body["parent"] is None
+
+
+def test_browse_directory_rejects_a_nonexistent_path(tmp_path):
+    client = create_app().test_client()
+
+    response = client.get("/api/browse-directory", query_string={"path": str(tmp_path / "nope")})
+
+    assert response.status_code == 404
+    assert response.get_json()["success"] is False
+
+
+def test_browse_directory_rejects_a_file(tmp_path):
+    a_file = tmp_path / "file.txt"
+    a_file.write_text("x")
+    client = create_app().test_client()
+
+    response = client.get("/api/browse-directory", query_string={"path": str(a_file)})
+
+    assert response.status_code == 400
+    assert response.get_json()["success"] is False
+
+
+def test_browse_directory_expands_a_leading_tilde(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "sub").mkdir()
+    client = create_app().test_client()
+
+    response = client.get("/api/browse-directory", query_string={"path": "~/sub"})
+
+    body = response.get_json()
+    assert body["success"] is True
+    assert body["path"] == str(tmp_path / "sub")

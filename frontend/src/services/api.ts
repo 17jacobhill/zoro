@@ -220,6 +220,13 @@ export const api = {
     return response.data;
   },
 
+  browseDirectory: async (
+    path?: string
+  ): Promise<{ success: boolean; path?: string; parent?: string | null; directories?: string[]; error?: string }> => {
+    const response = await axios.get(`${API_BASE}/browse-directory`, path ? { params: { path } } : undefined);
+    return response.data;
+  },
+
   resolveConflict: async (
     chatId: string,
     itemId: string,

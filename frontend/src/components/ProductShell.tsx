@@ -1,18 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Box, IconButton, Tab, Tabs, TextField, Tooltip, Typography } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
+import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import CheckIcon from '@mui/icons-material/Check';
 import CloseIcon from '@mui/icons-material/Close';
 
 import { colors } from '../design-system/colors';
 import zoroIcon from '../assets/sword.png';
 import { api } from '../services/api';
+import { DirectoryPickerModal } from './DirectoryPickerModal';
 import { KnowledgeBaseTab } from './KnowledgeBase/KnowledgeBaseTab';
 import { VisualizationTab } from './Visualization/VisualizationTab';
 
 function ProjectRootControl() {
   const [path, setPath] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -39,14 +42,15 @@ function ProjectRootControl() {
     setError(null);
   };
 
-  const save = async () => {
+  const applyNewPath = async (newPath: string) => {
     setSaving(true);
     setError(null);
     try {
-      const res = await api.setProjectRoot(draft.trim());
+      const res = await api.setProjectRoot(newPath);
       if (res.success && res.path) {
         setPath(res.path);
         setIsEditing(false);
+        setPickerOpen(false);
         // Every list/session in the app is scoped to the project root —
         // reload so all of it (sessions, plan, rules) re-fetches fresh
         // against the new project instead of trying to patch each piece
@@ -62,50 +66,62 @@ function ProjectRootControl() {
     }
   };
 
-  if (isEditing) {
-    return (
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flex: 1, minWidth: 0 }}>
-        <TextField
-          size="small"
-          autoFocus
-          fullWidth
-          placeholder="/absolute/path/to/project"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') save();
-            if (e.key === 'Escape') cancelEditing();
-          }}
-          error={Boolean(error)}
-          helperText={error ?? undefined}
-          disabled={saving}
-          sx={{ '& .MuiInputBase-input': { fontSize: '0.8rem', fontFamily: 'monospace' } }}
-        />
-        <IconButton size="small" onClick={save} disabled={saving} aria-label="Save project directory">
-          <CheckIcon fontSize="small" sx={{ color: colors.green }} />
-        </IconButton>
-        <IconButton size="small" onClick={cancelEditing} disabled={saving} aria-label="Cancel">
-          <CloseIcon fontSize="small" />
-        </IconButton>
-      </Box>
-    );
-  }
-
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
-      <Typography
-        noWrap
-        title={path ?? undefined}
-        sx={{ fontSize: '0.8rem', fontFamily: 'monospace', color: colors.grey, maxWidth: 420 }}
-      >
-        {path ?? 'Loading project directory…'}
-      </Typography>
-      <Tooltip title="Change project directory">
-        <IconButton size="small" onClick={startEditing} aria-label="Change project directory">
-          <EditIcon fontSize="small" sx={{ fontSize: 16 }} />
-        </IconButton>
-      </Tooltip>
-    </Box>
+    <>
+      {isEditing ? (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flex: 1, minWidth: 0 }}>
+          <TextField
+            size="small"
+            autoFocus
+            fullWidth
+            placeholder="/absolute/path/to/project"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') applyNewPath(draft.trim());
+              if (e.key === 'Escape') cancelEditing();
+            }}
+            error={Boolean(error)}
+            helperText={error ?? undefined}
+            disabled={saving}
+            sx={{ '& .MuiInputBase-input': { fontSize: '0.8rem', fontFamily: 'monospace' } }}
+          />
+          <IconButton size="small" onClick={() => applyNewPath(draft.trim())} disabled={saving} aria-label="Save project directory">
+            <CheckIcon fontSize="small" sx={{ color: colors.green }} />
+          </IconButton>
+          <IconButton size="small" onClick={cancelEditing} disabled={saving} aria-label="Cancel">
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Box>
+      ) : (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+          <Typography
+            noWrap
+            title={path ?? undefined}
+            sx={{ fontSize: '0.8rem', fontFamily: 'monospace', color: colors.grey, maxWidth: 380 }}
+          >
+            {path ?? 'Loading project directory…'}
+          </Typography>
+          <Tooltip title="Choose project directory">
+            <IconButton size="small" onClick={() => setPickerOpen(true)} aria-label="Choose project directory">
+              <FolderOpenIcon fontSize="small" sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Type project directory">
+            <IconButton size="small" onClick={startEditing} aria-label="Type project directory">
+              <EditIcon fontSize="small" sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
+        </Box>
+      )}
+
+      <DirectoryPickerModal
+        open={pickerOpen}
+        initialPath={path}
+        onClose={() => setPickerOpen(false)}
+        onSelect={applyNewPath}
+      />
+    </>
   );
 }
 
